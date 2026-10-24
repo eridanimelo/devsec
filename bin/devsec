@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# devsec — orquestrador de validação de segurança (SAST/SCA/DAST/secrets).
+#
+# Uso:
+#   ./bin/devsec doctor
+#   ./bin/devsec scan --profile profiles/example.env
+#   ./bin/devsec scan --profile profiles/achernar-identity.env --active --i-have-authorization
+#   ./bin/devsec report --run <run-id> --open
+#   ./bin/devsec list
+set -euo pipefail
+
+DEVSEC_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export DEVSEC_ROOT
+
+# shellcheck source=../lib/common.sh
+source "$DEVSEC_ROOT/lib/common.sh"
+
+usage() {
+  cat <<'EOF'
+devsec — pipeline local de segurança
+
+Comandos:
+  doctor                         Verifica pré-requisitos (Docker, jq, Python, stack)
+  scan --profile <arquivo.env>   Executa o pipeline e gera o relatório
+  report --run <run-id>          Regenera o relatório de uma execução existente
+  list                           Lista execuções e resultados
+  clean [--all]                  Remove execuções (padrão: mantém as 5 últimas)
+
+Opções de scan:
+  --profile, -p <arquivo>        Perfil de execução (obrigatório)
+  --only <stages>                Só executa estes estágios: sast,sca,secrets,dast
+  --skip <stages>                Pula estes estágios
+  --active                       Habilita DAST ativo (payloads de ataque)
+  --i-have-authorization         Confirma autorização do alvo (obrigatório no active)
+  --baseline <run-id|last>       Compara com uma execução anterior
+  --no-stack                     Não sobe/verifica a stack de ferramentas
+  --run-id <id>                  Define o identificador da execução
+  --open                         Abre o relatório HTML ao terminar
+
+Opções de report:
+  --run <run-id|last>            Execução alvo (padrão: last)
+  --open                         Abre o relatório HTML
+EOF
+}
+
+cmd="${1:-help}"
+shift || true
+
+case "$cmd" in
+  doctor)
+    # shellcheck source=../lib/preflight.sh
+    source "$DEVSEC_ROOT/lib/preflight.sh"
+    cmd_doctor "$@"
+    ;;
+  scan)
+    # shellcheck source=../lib/scan.sh
+    source "$DEVSEC_ROOT/lib/scan.sh"
+    cmd_scan "$@"
+    ;;
+  report)
+    # shellcheck source=../lib/scan.sh
+    source "$DEVSEC_ROOT/lib/scan.sh"
+    cmd_report "$@"
+    ;;
+  list)
+    # shellcheck source=../lib/scan.sh
+    source "$DEVSEC_ROOT/lib/scan.sh"
+    cmd_list "$@"
+    ;;
+  clean)
+    # shellcheck source=../lib/scan.sh
+    source "$DEVSEC_ROOT/lib/scan.sh"
+    cmd_clean "$@"
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  *)
+    usage >&2
+    die "comando desconhecido: $cmd"
+    ;;
+esac

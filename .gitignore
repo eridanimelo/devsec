@@ -1,5 +1,6 @@
 # Segredos locais
 .env
+profiles/*.secrets.env
 
 # Relatórios e artefatos gerados pelos scans
 reports/**/*
@@ -7,3 +8,7 @@ reports/**/*
 
 # Snapshots gerados pelo MCP do Playwright
 .playwright-mcp/
+
+# Python
+__pycache__/
+*.pyc

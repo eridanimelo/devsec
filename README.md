@@ -242,7 +242,41 @@ Referência: https://www.zaproxy.org/docs/docker/
 
 ---
 
-## 6. Comandos úteis
+## 6. Automação — pipeline completo (`devsec`)
+
+Além dos scripts individuais, o repositório tem um CLI que executa tudo e
+entrega **um relatório único**: SAST + SCA + segredos + DAST, com autenticação
+de teste opcional.
+
+```bash
+cp profiles/example.env profiles/meu-projeto.env
+# edite BACKEND_PATH, FRONTEND_PATH, APP_URL e AUTH_MODE
+
+./bin/devsec doctor
+./bin/devsec scan --profile profiles/meu-projeto.env
+./bin/devsec report --run last --open
+```
+
+O resultado fica em `reports/runs/<run-id>/`:
+
+| Arquivo | Uso |
+|---|---|
+| `report.html` | leitura humana |
+| `report.md` | versionar/colar em issue |
+| `findings.json` | automação, Jira, IA |
+| `summary.json` | gate, contagens, delta e cobertura |
+| `context.md` | resumo compacto para agentes de IA |
+| `raw/` + `logs/` | auditoria e diagnóstico |
+
+Credenciais de teste vão em `profiles/<nome>.secrets.env` (ignorado no Git).
+O DAST ativo exige `--active --i-have-authorization`.
+
+Detalhes, modos de autenticação e integração com o motor `achernar_ia`:
+[`docs/automation.md`](docs/automation.md).
+
+---
+
+## 7. Comandos úteis
 
 ```bash
 make up            # sobe a stack
@@ -267,7 +301,7 @@ Se mudar `DTRACK_API_PORT`, ajuste também `DTRACK_API_BASE_URL` (é a URL que o
 
 ---
 
-## 7. Solução de problemas
+## 8. Solução de problemas
 
 | Sintoma | Causa / solução |
 |---|---|
@@ -283,13 +317,17 @@ Se mudar `DTRACK_API_PORT`, ajuste também `DTRACK_API_BASE_URL` (é a URL que o
 
 ---
 
-## 8. Estrutura do repositório
+## 9. Estrutura do repositório
 
 ```
 .
 ├── docker-compose.yml              # SonarQube, Dependency-Track e ZAP
 ├── .env.example                    # variáveis (copie para .env)
 ├── Makefile                        # atalhos
+├── bin/devsec                      # CLI do pipeline completo
+├── lib/                            # orquestração + normalização/relatório
+├── profiles/                       # perfis por projeto (segredos ignorados)
+├── docs/automation.md              # documentação do pipeline
 ├── examples/
 │   ├── sonar-project.properties    # exemplo de config do scanner
 │   └── github-actions.yml          # exemplo de pipeline CI

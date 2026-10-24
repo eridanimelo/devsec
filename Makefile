@@ -1,4 +1,6 @@
-.PHONY: help up down restart ps logs pull reset sonar-logs dtrack-logs zap-logs
+.PHONY: help up down restart ps logs pull reset sonar-logs dtrack-logs zap-logs doctor scan report runs
+
+PROFILE ?= profiles/example.env
 
 help: ## Lista os comandos disponíveis
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -33,3 +35,15 @@ dtrack-logs: ## Logs do Dependency-Track
 
 zap-logs: ## Logs do OWASP ZAP
 	docker compose logs -f --tail=200 zap
+
+doctor: ## Verifica pré-requisitos e saúde da stack
+	./bin/devsec doctor
+
+scan: ## Executa o pipeline (PROFILE=profiles/arquivo.env)
+	./bin/devsec scan --profile $(PROFILE)
+
+report: ## Abre o relatório da última execução
+	./bin/devsec report --run last --open
+
+runs: ## Lista execuções e resultados
+	./bin/devsec list
