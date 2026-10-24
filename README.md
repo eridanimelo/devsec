@@ -4,12 +4,14 @@ Laboratório local (Docker Compose) com as três ferramentas de segurança usada
 
 | Serviço | Função | URL padrão | Credenciais iniciais |
 |---|---|---|---|
-| **SonarQube** (Community LTS) | SAST / qualidade de código | http://localhost:9000 | `admin` / `admin` |
-| **Dependency-Track** (frontend) | SCA / análise de SBOM | http://localhost:8080 | `admin` / `admin` |
-| **Dependency-Track** (API) | API usada pelo frontend e pelo CI | http://localhost:8081 | — |
-| **OWASP ZAP** (daemon) | DAST / scan de APIs | http://localhost:8090 | API key em `.env` |
+| **SonarQube** (Community 26.10) | SAST / qualidade de código | http://localhost:9000 | `admin` / `admin` |
+| **Dependency-Track** (frontend) | SCA / análise de SBOM | http://localhost:9080 | `admin` / `admin` |
+| **Dependency-Track** (API) | API usada pelo frontend e pelo CI | http://localhost:9081 | — |
+| **OWASP ZAP** (daemon) | DAST / scan de APIs | http://localhost:9082 | API key em `.env` |
 
 > ⚠️ Use apenas em ambiente local/laboratório. Troque as senhas do `.env`, e só faça scan em alvos que você tem autorização para testar.
+
+Versões validadas: **SonarQube 26.10.0 Community**, **Dependency-Track 4.14.5** e **ZAP 2.17.0**.
 
 ---
 
@@ -17,7 +19,7 @@ Laboratório local (Docker Compose) com as três ferramentas de segurança usada
 
 - Docker + Docker Compose v2 (`docker compose version`)
 - ~8 GB de RAM livres (SonarQube ~2 GB + Dependency-Track ~2 GB + ZAP ~1 GB)
-- Portas livres: `9000`, `8080`, `8081`, `8090` (configuráveis no `.env`)
+- Portas livres: `9000`, `9080`, `9081`, `9082` (configuráveis no `.env`)
 
 ## 2. Subindo a stack
 
@@ -110,7 +112,7 @@ O Dependency-Track **não analisa o código**: ele recebe um **SBOM** (CycloneDX
 
 ### 4.1 Criando o projeto
 
-1. Acesse http://localhost:8080 e entre com `admin` / `admin`.
+1. Acesse http://localhost:9080 e entre com `admin` / `admin`.
 2. Troque a senha quando solicitado.
 3. Vá em **Projects → Create Project**.
 4. Preencha:
@@ -126,6 +128,7 @@ O Dependency-Track **não analisa o código**: ele recebe um **SBOM** (CycloneDX
 2. Selecione o time (ex.: `Automation`) ou crie um novo.
 3. Aba **API Keys → +** (Create API Key).
 4. Dê um nome (ex.: `ci-upload`) e copie a chave. Guarde como `DTRACK_API_KEY`.
+   A chave é exibida **uma única vez** (a partir da 4.13 ela é armazenada com hash).
 
 > A API key herda as permissões do time. Para CI, mantenha o time apenas com acesso de upload.
 
@@ -168,7 +171,7 @@ export DTRACK_API_KEY=<chave>
 Ou com `curl`:
 
 ```bash
-curl -X POST http://localhost:8081/api/v1/bom \
+curl -X POST http://localhost:9081/api/v1/bom \
   -H "X-Api-Key: $DTRACK_API_KEY" \
   -F "projectName=minha-api" \
   -F "projectVersion=1.0.0" \
@@ -187,7 +190,7 @@ acompanhe em **Projects → seu projeto → Components/Vulnerabilities**.
 
 ## 5. OWASP ZAP — como adicionar um alvo
 
-O container sobe em modo **daemon** (sem interface gráfica), com a API em http://localhost:8090.
+O container sobe em modo **daemon** (sem interface gráfica), com a API em http://localhost:9082.
 Para explorar manualmente, use o **ZAP Desktop** no seu computador, ou execute
 `docker exec -it devsec-zap zap-webswing.sh` (interface via navegador).
 
@@ -271,9 +274,10 @@ Se mudar `DTRACK_API_PORT`, ajuste também `DTRACK_API_BASE_URL` (é a URL que o
 | SonarQube reinicia em loop no Linux | `sudo sysctl -w vm.max_map_count=524288` (Docker Desktop já configura) |
 | Containers morrem por falta de memória | Feche outros apps ou aumente a RAM do Docker Desktop (≥ 8 GB) |
 | `port is already allocated` | Outra aplicação usa a porta; altere no `.env` |
-| Frontend do Dependency-Track mostra erro de API | `DTRACK_API_BASE_URL` precisa ser acessível pelo navegador (ex.: `http://localhost:8081`) |
-| Vulnerabilidades não aparecem no Dependency-Track | A sincronização inicial da NVD ainda não terminou |
+| Frontend do Dependency-Track mostra erro de API | `DTRACK_API_BASE_URL` precisa ser acessível pelo navegador (ex.: `http://localhost:9081`) |
+| Vulnerabilidades não aparecem no Dependency-Track | A sincronização inicial da NVD ainda não terminou. Opcionalmente configure uma API key da NVD em **Administration** para acelerar (sem ela o rate limit é agressivo) |
 | ZAP retorna `400 Bad Request` | Use a API key do `.env`; a API exige `apikey` em todas as chamadas |
+| ZAP retorna erro de conexão na API | A porta interna e a externa do ZAP precisam ser iguais (o compose já sincroniza via `ZAP_PORT`) |
 | Token do SonarQube inválido | Gere outro em **My Account → Security**; tokens expiram se configurado |
 | Mudou senha no `.env` e o banco não conecta | O volume já foi criado com a senha antiga: `make reset` |
 

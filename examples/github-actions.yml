@@ -5,7 +5,7 @@
 #   SONAR_TOKEN       -> token do SonarQube
 #   DTRACK_API_KEY    -> API key do Dependency-Track
 #   SONAR_HOST_URL    -> ex.: http://sonarqube.interno:9000
-#   DTRACK_URL        -> ex.: http://dtrack.interno:8081
+#   DTRACK_URL        -> ex.: http://dtrack.interno:9081
 name: devsec
 
 on:

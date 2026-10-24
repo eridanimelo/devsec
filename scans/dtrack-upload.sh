@@ -6,7 +6,7 @@
 #
 # Variáveis:
 #   DTRACK_API_KEY  (obrigatória) API key criada em Administration > Access Management > Teams
-#   DTRACK_URL      padrão http://localhost:8081
+#   DTRACK_URL      padrão http://localhost:9081
 #
 # O projeto/versão é criado automaticamente se não existir (autoCreate=true).
 set -euo pipefail
@@ -14,7 +14,7 @@ set -euo pipefail
 BOM_FILE="${1:?uso: $0 <arquivo-bom.json> [nome-projeto] [versao]}"
 PROJECT_NAME="${2:-$(basename "$(cd "$(dirname "$BOM_FILE")" && pwd)")}"
 PROJECT_VERSION="${3:-1.0.0}"
-DTRACK_URL="${DTRACK_URL:-http://localhost:8081}"
+DTRACK_URL="${DTRACK_URL:-http://localhost:9081}"
 
 if [[ -z "${DTRACK_API_KEY:-}" ]]; then
   echo "ERRO: defina DTRACK_API_KEY." >&2

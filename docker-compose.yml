@@ -28,7 +28,8 @@ services:
       - devsec
 
   sonarqube:
-    image: sonarqube:lts-community
+    # A tag "lts-community" está congelada no 9.9 (EOL). "community" = versão atual.
+    image: sonarqube:community
     container_name: devsec-sonarqube
     depends_on:
       sonar-db:
@@ -94,7 +95,7 @@ services:
       ALPINE_DATABASE_POOL_MAX_LIFETIME: "600000"
       EXTRA_JAVA_OPTIONS: "-Xmx2g"
     ports:
-      - "${DTRACK_API_PORT:-8081}:8080"
+      - "${DTRACK_API_PORT:-9081}:8080"
     volumes:
       - dtrack-data:/data
     restart: unless-stopped
@@ -109,9 +110,9 @@ services:
         condition: service_healthy
     environment:
       # URL do API Server que o NAVEGADOR acessa (não é a URL interna do compose).
-      API_BASE_URL: ${DTRACK_API_BASE_URL:-http://localhost:8081}
+      API_BASE_URL: ${DTRACK_API_BASE_URL:-http://localhost:9081}
     ports:
-      - "${DTRACK_WEB_PORT:-8080}:8080"
+      - "${DTRACK_WEB_PORT:-9080}:8080"
     restart: unless-stopped
     networks:
       - devsec
@@ -120,14 +121,18 @@ services:
   zap:
     image: ghcr.io/zaproxy/zaproxy:stable
     container_name: devsec-zap
-    # API key obrigatória: sem ela o ZAP não aceita comandos via API/rede.
+    environment:
+      # Mantém a porta interna igual à externa: a API do ZAP valida o Host.
+      ZAP_PORT: "${ZAP_PORT:-9082}"
+    # A API do ZAP valida o header Host; por isso a porta interna é a mesma
+    # da externa. Alterar ZAP_PORT no .env ajusta os dois lados.
     command:
       - zap.sh
       - -daemon
       - -host
       - 0.0.0.0
       - -port
-      - "8080"
+      - "${ZAP_PORT:-9082}"
       - -config
       - api.key=${ZAP_API_KEY:-changeme}
       - -config
@@ -138,7 +143,7 @@ services:
       - -config
       - api.addrs.addr.regex=true
     ports:
-      - "${ZAP_PORT:-8090}:8080"
+      - "${ZAP_PORT:-9082}:${ZAP_PORT:-9082}"
     volumes:
       # Relatórios gerados pelos scripts em ./reports/zap
       - ./reports/zap:/zap/wrk:rw

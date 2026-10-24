@@ -2,5 +2,5 @@
 .env
 
 # Relatórios e artefatos gerados pelos scans
-reports/**
+reports/**/*
 !reports/**/.gitkeep
