@@ -4,3 +4,6 @@
 # Relatórios e artefatos gerados pelos scans
 reports/**/*
 !reports/**/.gitkeep
+
+# Snapshots gerados pelo MCP do Playwright
+.playwright-mcp/
