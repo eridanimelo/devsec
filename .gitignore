@@ -1,0 +1,6 @@
+# Segredos locais
+.env
+
+# Relatórios e artefatos gerados pelos scans
+reports/**
+!reports/**/.gitkeep

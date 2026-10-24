@@ -1,0 +1,54 @@
+# Fluxo sugerido de CI (GitHub Actions) usando a stack local.
+# Este arquivo é apenas um exemplo: ajuste hosts, secrets e comandos.
+#
+# Secrets necessários no repositório:
+#   SONAR_TOKEN       -> token do SonarQube
+#   DTRACK_API_KEY    -> API key do Dependency-Track
+#   SONAR_HOST_URL    -> ex.: http://sonarqube.interno:9000
+#   DTRACK_URL        -> ex.: http://dtrack.interno:8081
+name: devsec
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  sast-sonar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  sca-dtrack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Gerar SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          format: cyclonedx-json
+          output-file: bom.json
+      - name: Enviar para o Dependency-Track
+        run: |
+          curl -sS -X POST "${{ secrets.DTRACK_URL }}/api/v1/bom" \
+            -H "X-Api-Key: ${{ secrets.DTRACK_API_KEY }}" \
+            -F "projectName=${{ github.event.repository.name }}" \
+            -F "projectVersion=${{ github.ref_name }}" \
+            -F "autoCreate=true" \
+            -F "bom=@bom.json"
+
+  dast-zap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.14.0
+        with:
+          target: ${{ vars.STAGING_URL }}
+          fail_action: false

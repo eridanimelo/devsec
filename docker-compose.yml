@@ -1,0 +1,162 @@
+name: devsec
+
+# Stack local de segurança (AppSec / DevSecOps)
+#   SonarQube      -> análise estática (SAST / qualidade de código)
+#   Dependency-Track -> análise de dependências (SCA) via SBOM
+#   OWASP ZAP      -> análise dinâmica (DAST) e scan de APIs
+#
+# Copie .env.example para .env antes de subir:  cp .env.example .env
+
+services:
+  # ---------------------------------------------------------------- SonarQube
+  sonar-db:
+    image: postgres:17-alpine
+    container_name: devsec-sonar-db
+    environment:
+      POSTGRES_DB: ${SONAR_DB_NAME:-sonar}
+      POSTGRES_USER: ${SONAR_DB_USER:-sonar}
+      POSTGRES_PASSWORD: ${SONAR_DB_PASSWORD:-sonar}
+    volumes:
+      - sonar-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - devsec
+
+  sonarqube:
+    image: sonarqube:lts-community
+    container_name: devsec-sonarqube
+    depends_on:
+      sonar-db:
+        condition: service_healthy
+    environment:
+      SONAR_JDBC_URL: jdbc:postgresql://sonar-db:5432/${SONAR_DB_NAME:-sonar}
+      SONAR_JDBC_USERNAME: ${SONAR_DB_USER:-sonar}
+      SONAR_JDBC_PASSWORD: ${SONAR_DB_PASSWORD:-sonar}
+      # Heap reduzido para caber em um Docker Desktop de 8 GB.
+      # Em máquina dedicada, aumente (ex.: -Xmx2g / -Xmx1g / -Xmx1g).
+      SONAR_WEB_JAVAOPTS: -Xmx512m
+      SONAR_CE_JAVAOPTS: -Xmx1024m
+      SONAR_SEARCH_JAVAOPTS: -Xms512m -Xmx512m
+    ports:
+      - "${SONAR_PORT:-9000}:9000"
+    volumes:
+      - sonarqube-data:/opt/sonarqube/data
+      - sonarqube-extensions:/opt/sonarqube/extensions
+      - sonarqube-logs:/opt/sonarqube/logs
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    restart: unless-stopped
+    networks:
+      - devsec
+
+  # --------------------------------------------------------- Dependency-Track
+  dtrack-db:
+    image: postgres:17-alpine
+    container_name: devsec-dtrack-db
+    environment:
+      POSTGRES_DB: ${DTRACK_DB_NAME:-dtrack}
+      POSTGRES_USER: ${DTRACK_DB_USER:-dtrack}
+      POSTGRES_PASSWORD: ${DTRACK_DB_PASSWORD:-dtrack}
+    volumes:
+      - dtrack-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - devsec
+
+  dtrack-apiserver:
+    image: dependencytrack/apiserver:4.14.5
+    container_name: devsec-dtrack-apiserver
+    depends_on:
+      dtrack-db:
+        condition: service_healthy
+    environment:
+      ALPINE_DATABASE_MODE: external
+      ALPINE_DATABASE_URL: jdbc:postgresql://dtrack-db:5432/${DTRACK_DB_NAME:-dtrack}
+      ALPINE_DATABASE_DRIVER: org.postgresql.Driver
+      ALPINE_DATABASE_USERNAME: ${DTRACK_DB_USER:-dtrack}
+      ALPINE_DATABASE_PASSWORD: ${DTRACK_DB_PASSWORD:-dtrack}
+      ALPINE_DATABASE_POOL_ENABLED: "true"
+      ALPINE_DATABASE_POOL_MAX_SIZE: "20"
+      ALPINE_DATABASE_POOL_MIN_IDLE: "10"
+      ALPINE_DATABASE_POOL_IDLE_TIMEOUT: "300000"
+      ALPINE_DATABASE_POOL_MAX_LIFETIME: "600000"
+      EXTRA_JAVA_OPTIONS: "-Xmx2g"
+    ports:
+      - "${DTRACK_API_PORT:-8081}:8080"
+    volumes:
+      - dtrack-data:/data
+    restart: unless-stopped
+    networks:
+      - devsec
+
+  dtrack-frontend:
+    image: dependencytrack/frontend:4.14.5
+    container_name: devsec-dtrack-frontend
+    depends_on:
+      dtrack-apiserver:
+        condition: service_healthy
+    environment:
+      # URL do API Server que o NAVEGADOR acessa (não é a URL interna do compose).
+      API_BASE_URL: ${DTRACK_API_BASE_URL:-http://localhost:8081}
+    ports:
+      - "${DTRACK_WEB_PORT:-8080}:8080"
+    restart: unless-stopped
+    networks:
+      - devsec
+
+  # ------------------------------------------------------------------ OWASP ZAP
+  zap:
+    image: ghcr.io/zaproxy/zaproxy:stable
+    container_name: devsec-zap
+    # API key obrigatória: sem ela o ZAP não aceita comandos via API/rede.
+    command:
+      - zap.sh
+      - -daemon
+      - -host
+      - 0.0.0.0
+      - -port
+      - "8080"
+      - -config
+      - api.key=${ZAP_API_KEY:-changeme}
+      - -config
+      - api.disablekey=false
+      # Permite que o ZAP aceite conexões de qualquer IP (host, CI etc.).
+      - -config
+      - api.addrs.addr.name=.*
+      - -config
+      - api.addrs.addr.regex=true
+    ports:
+      - "${ZAP_PORT:-8090}:8080"
+    volumes:
+      # Relatórios gerados pelos scripts em ./reports/zap
+      - ./reports/zap:/zap/wrk:rw
+      # Sessões/configurações persistentes do ZAP
+      - zap-data:/home/zap/.ZAP
+    restart: unless-stopped
+    networks:
+      - devsec
+
+networks:
+  devsec:
+    name: devsec
+
+volumes:
+  sonar-db-data:
+  sonarqube-data:
+  sonarqube-extensions:
+  sonarqube-logs:
+  dtrack-db-data:
+  dtrack-data:
+  zap-data:
