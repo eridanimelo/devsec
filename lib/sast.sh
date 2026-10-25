@@ -104,19 +104,18 @@ ensure_sonar_token() {
     return 0
   fi
 
-  log "SonarQube: gerando token via API (usuário $SONAR_ADMIN_USER)"
-  local resp
-  resp="$(curl -sS -u "$SONAR_ADMIN_USER:$SONAR_ADMIN_PASSWORD" \
-    -X POST "$SONAR_URL/api/user_tokens/generate" \
-    --data-urlencode "name=devsec-$RUN_ID" 2>/dev/null || true)"
+  warn "SonarQube: configure SONAR_TOKEN ou tokens por projeto no arquivo local de segredos"
+  return 1
+}
 
-  SONAR_TOKEN_EFFECTIVE="$(jq -r '.token // empty' <<<"$resp" 2>/dev/null || true)"
-  if [[ -z "$SONAR_TOKEN_EFFECTIVE" ]]; then
-    warn "não foi possível gerar token no SonarQube (login/senha padrão alterados?)."
-    warn "defina SONAR_TOKEN no perfil ou em <perfil>.secrets.env"
-    return 1
-  fi
-  ok "token do SonarQube gerado"
+select_sonar_token() {
+  local project="$1"
+  SONAR_TOKEN_EFFECTIVE=""
+  case "$project" in
+    backend) SONAR_TOKEN_EFFECTIVE="${SONAR_TOKEN_BACKEND:-}" ;;
+    frontend) SONAR_TOKEN_EFFECTIVE="${SONAR_TOKEN_FRONTEND:-}" ;;
+  esac
+  [[ -n "$SONAR_TOKEN_EFFECTIVE" ]] || ensure_sonar_token
 }
 
 wait_sonar_ce() {
@@ -196,10 +195,6 @@ fetch_sonar_hotspots() {
 
 run_sonar() {
   component_names
-  if ! ensure_sonar_token; then
-    return 1
-  fi
-
   local host_in_container
   host_in_container="$(sonar_host_for_container)"
   local rc=0
@@ -209,6 +204,7 @@ run_sonar() {
     local name="${COMPONENT_NAMES[$i]}"
     local path="${COMPONENT_PATHS[$i]}"
     local key="${SONAR_PROJECT_KEY}-${name}"
+    if ! select_sonar_token "$name"; then rc=1; continue; fi
 
     log "SonarQube: $name → projeto $key"
     local java_args=()

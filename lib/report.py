@@ -584,6 +584,13 @@ def compute_delta(run_dir: str, findings: list[dict], baseline: str) -> dict | N
 
     current_run = load_json(os.path.join(run_dir, "run.json"), {})
     base_run = load_json(os.path.join(base_dir, "run.json"), {})
+    current_manifest = load_json(os.path.join(run_dir, "security-data.json"), {})
+    base_manifest = load_json(os.path.join(base_dir, "security-data.json"), {})
+    if bool(current_manifest) != bool(base_manifest) or (current_manifest and
+            (current_manifest.get("rules") != base_manifest.get("rules") or
+             current_manifest.get("images") != base_manifest.get("images"))):
+        return {"baseline": os.path.basename(base_dir), "error": "Regras/versões das ferramentas mudaram ou não foram registradas na baseline; comparação omitida."}
+
     if any(current_run.get(key) != base_run.get(key) for key in ("project", "scope", "dast")):
         return {"baseline": os.path.basename(base_dir), "error": "Projeto, escopo ou modo DAST incompatível; comparação omitida."}
     def coverage(directory):

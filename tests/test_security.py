@@ -124,6 +124,24 @@ class Orchestration(unittest.TestCase):
         env = dict(os.environ, DEVSEC_ROOT=str(ROOT), RUN_DIR=directory)
         return subprocess.run(['bash', '-eu', '-c', code], env=env, text=True, capture_output=True)
 
+    def test_sonar_tokens_are_scoped_and_missing_token_does_not_create_one(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.shell('''
+source "$DEVSEC_ROOT/lib/common.sh"
+source "$DEVSEC_ROOT/lib/sast.sh"
+curl() { exit 99; }
+SONAR_TOKEN_BACKEND=fixture_backend
+SONAR_TOKEN_FRONTEND=fixture_frontend
+select_sonar_token backend
+[[ "$SONAR_TOKEN_EFFECTIVE" == fixture_backend ]]
+select_sonar_token frontend
+[[ "$SONAR_TOKEN_EFFECTIVE" == fixture_frontend ]]
+unset SONAR_TOKEN_FRONTEND
+if select_sonar_token frontend; then exit 98; fi
+[[ -z "$SONAR_TOKEN_EFFECTIVE" ]]
+''', tmp)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_analyze_selects_default_profile(self):
         with tempfile.TemporaryDirectory() as tmp:
             result = self.shell('''

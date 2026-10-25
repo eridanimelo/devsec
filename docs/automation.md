@@ -469,3 +469,11 @@ firewall/proxy corporativo, incluindo notificações, telemetria e redirecioname
 Scripts legados em scans/ não têm todas as garantias do pipeline integrado; use
 bin/devsec. Nenhuma regra autoriza enviar dados corporativos para uma IA externa:
 quando o agente não for aprovado, execute somente o CLI e consulte resultados locais.
+
+### Tokens do SonarQube por projeto
+
+O pipeline aceita SONAR_TOKEN_BACKEND e SONAR_TOKEN_FRONTEND em
+`profiles/<perfil>.secrets.env`. Prefira tokens PROJECT_ANALYSIS_TOKEN limitados
+às respectivas chaves do projeto. SONAR_TOKEN continua como alternativa compartilhada.
+Credencial ausente não dispara mais criação automática de token administrativo.
+A criação e o prazo dos tokens devem ser autorizados antes de gerar credenciais.
