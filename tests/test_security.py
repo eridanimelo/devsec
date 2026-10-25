@@ -48,6 +48,66 @@ class Reports(unittest.TestCase):
             self.assertEqual(plan['items'][0]['finding_id'], 'F-0001')
             self.assertIn('regressão', plan['items'][0]['validation'])
             self.assertEqual(json.loads((run / 'summary.json').read_text())['gate']['result'], 'FAIL')
+            findings = json.loads((run / 'findings.json').read_text())
+            (run / 'triage.json').write_text(json.dumps({findings[0]['fingerprint']: {
+                'status': 'reviewed', 'rationale': 'Contexto revisado sem alterar a evidência bruta.'}}))
+            report.main(['--run-dir', tmp])
+            reviewed = json.loads((run / 'projects/backend/findings.json').read_text())
+            self.assertEqual(reviewed[0]['review']['status'], 'reviewed')
+            self.assertIn('Contexto revisado', (run / 'index.html').read_text())
+
+
+    def test_group_reports_keep_projects_independent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run = Path(tmp)
+            (run / 'raw/sast').mkdir(parents=True)
+            (run / 'run.json').write_text(json.dumps({'project': 'identity', 'group': 'achernar_identity',
+                'scope': {'frontend': '/src/frontend', 'backend': '/src/backend'}}))
+            # Mesma regra/path/linha: não pode ser deduplicada entre projetos.
+            fixture = {'results': [{'check_id': 'same.rule', 'path': '/src/main.py',
+                'start': {'line': 1}, 'extra': {'severity': 'ERROR', 'message': 'fixture'}}]}
+            for project in ('frontend', 'backend'):
+                (run / ('raw/sast/semgrep-' + project + '.json')).write_text(json.dumps(fixture))
+            self.assertEqual(report.main(['--run-dir', tmp]), 0)
+            summary = json.loads((run / 'summary.json').read_text())
+            self.assertEqual(summary['group'], 'achernar_identity')
+            self.assertEqual(summary['counts']['total'], 2)
+            self.assertEqual(len(summary['projects']), 2)
+            fingerprints = set()
+            for project in ('frontend', 'backend'):
+                child = run / 'projects' / project
+                findings = json.loads((child / 'findings.json').read_text())
+                self.assertEqual(len(findings), 1)
+                self.assertEqual(findings[0]['project'], project)
+                fingerprints.add(findings[0]['fingerprint'])
+                self.assertTrue((child / 'index.html').is_file())
+                self.assertTrue((child / 'remediation-plan.md').is_file())
+                child_summary = json.loads((child / 'summary.json').read_text())
+                self.assertEqual(child_summary['report_level'], 'project')
+                self.assertEqual(child_summary['group'], 'achernar_identity')
+                self.assertNotIn('backend' if project == 'frontend' else 'frontend', child_summary['scope'])
+            self.assertEqual(len(fingerprints), 2)
+
+    def test_dast_routes_belong_to_correct_project(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run = Path(tmp)
+            (run / 'raw/dast').mkdir(parents=True)
+            (run / 'run.json').write_text(json.dumps({'group': 'identity', 'scope': {
+                'frontend': '/src/frontend', 'backend': '/src/backend',
+                'app_url': 'http://localhost:4200', 'api_url': 'http://localhost:8080'}}))
+            alerts = [{'pluginid': str(i), 'alert': 'fixture', 'riskcode': '1',
+                       'instances': [{'uri': url}]} for i, url in enumerate((
+                'http://host.docker.internal:4200/',
+                'http://host.docker.internal:4200/api/me',
+                'http://host.docker.internal:8080/api/me',
+                'http://other.invalid/'))]
+            (run / 'raw/dast/baseline.json').write_text(json.dumps({'site': [{'alerts': alerts}]}))
+            findings, _, _ = report.collect(tmp)
+            owners = {f['location']['url']: f['project'] for f in findings}
+            self.assertEqual(owners['http://localhost:4200/'], 'frontend')
+            self.assertEqual(owners['http://localhost:4200/api/me'], 'backend')
+            self.assertEqual(owners['http://localhost:8080/api/me'], 'backend')
+            self.assertEqual(owners['http://other.invalid/'], 'shared')
 
     def test_baseline_rejects_other_application(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -117,7 +177,7 @@ application_up
             args = (Path(tmp) / 'args').read_text().splitlines()
             self.assertIn(str(Path(tmp) / 'app compose.yml'), args)
             self.assertIn(str(Path(tmp) / 'test secrets.env'), args)
-            self.assertEqual(args[-3:], ['up', '-d', '--build'])
+            self.assertEqual(args[-5:], ['up', '-d', '--no-build', '--pull', 'never'])
 
     def test_auth_failure_removes_temporary_credentials(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -160,6 +220,21 @@ dast_login
 ''', tmp)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((Path(tmp) / 'verified').read_text(), 'auth_verified=true')
+
+    def test_bom_http_200_is_not_processing_complete(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self.shell('''
+source "$DEVSEC_ROOT/lib/common.sh"
+source "$DEVSEC_ROOT/lib/sca.sh"
+mkdir -p "$RUN_DIR/raw/sca"
+DTRACK_URL=http://localhost:9081 DTRACK_API_KEY=fixture
+sleep() { :; }
+curl() { printf '{"processing":true}' > "$RUN_DIR/raw/sca/.bom-processing.json"; printf '200'; }
+if wait_dtrack_bom fixture 1; then exit 99; fi
+curl() { printf '{"processing":false}' > "$RUN_DIR/raw/sca/.bom-processing.json"; printf '200'; }
+wait_dtrack_bom fixture 1
+''', tmp)
+            self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_api_scan_is_passive_by_default(self):
         with tempfile.TemporaryDirectory() as tmp:

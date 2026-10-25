@@ -14,6 +14,7 @@ def build_plan(findings):
         'notice': 'Plano preliminar baseado nos scanners. Requer revisão do código e confirmação de contexto antes da correção.',
         'items': [{
             'finding_id': f['id'], 'fingerprint': f['fingerprint'],
+            'project': f.get('project', ''), 'group': f.get('group', ''),
             'priority': {'critical': 'P0', 'high': 'P1', 'medium': 'P2'}.get(f['severity'], 'P3'),
             'title': f['title'], 'category': f['category'], 'source': f['source'],
             'severity': f['severity'], 'location': f['location'],
@@ -21,7 +22,7 @@ def build_plan(findings):
             'action': f.get('remediation') or 'Revisar o fluxo e a evidência no código para definir a mudança adequada.',
             'validation': validation.get(f['category'], 'Repetir análise equivalente e verificar regressão funcional.'),
             'acceptance': 'Correção confirmada por revisão e teste; achado reavaliado com escopo e cobertura equivalentes.',
-            'status': 'needs_review',
+            'status': 'needs_review', 'review': f.get('review', {}),
         } for f in findings],
     }
 
@@ -35,10 +36,10 @@ def plan_markdown(plan):
         lines += ['Nenhum item identificado. Consulte a cobertura no dashboard antes de concluir a análise.', '']
     for item in plan['items']:
         lines += [f"## {item['priority']} · {item['finding_id']}", '', '```text',
-                  literal(item['title']), 'Local: ' + literal(json.dumps(item['location'], ensure_ascii=False)),
+                  literal(item['title']), 'Projeto: ' + literal(item.get('project', '')), 'Local: ' + literal(json.dumps(item['location'], ensure_ascii=False)),
                   'Evidência: ' + literal(item['evidence'] or 'Consultar saída da ferramenta.'),
                   'Ação: ' + literal(item['action']), 'Validação: ' + item['validation'],
-                  'Aceite: ' + item['acceptance'], 'Estado: requer revisão', '```', '']
+                  'Aceite: ' + item['acceptance'], 'Recomendação contextual: ' + literal(item.get('review', {}).get('action', 'Ver ação proposta.')), 'Estado: requer revisão', 'Triagem: ' + literal(item.get('review', {}).get('rationale', 'Pendente de revisão contextual.')), '```', '']
     return '\n'.join(lines)
 
 
@@ -58,11 +59,11 @@ TEMPLATE = '''<!doctype html>
 </style></head><body><main>
 <header><div><span class="brand">ACHERNAR SECURITY</span><h1 id="project">Análise de segurança</h1><div id="run" class="muted"></div></div><div id="gate" class="gate"></div></header>
 <nav><a href="report.html">Relatório detalhado</a><a href="remediation-plan.md">Plano de correção</a><a href="findings.json" download>Achados JSON</a><a href="summary.json" download>Resumo JSON</a></nav>
-<div id="cards" class="cards"></div>
-<section class="box"><strong>Escopo e limites</strong><p id="scope" class="scope"></p><p id="auth" class="muted"></p><p>Achados de scanners exigem triagem. Etapas com falha ou não executadas representam cobertura incompleta. A ausência de um alerta não comprova correção.</p><p id="delta" class="muted"></p></section>
+<p id="hierarchy" class="muted"></p><nav id="projects" aria-label="Projetos do grupo"></nav><div id="cards" class="cards"></div>
+<section class="box"><strong>Escopo e limites</strong><p id="scope" class="scope"></p><p id="auth" class="muted"></p><p>Achados de scanners exigem triagem. Etapas com falha ou não executadas representam cobertura incompleta. A ausência de um alerta não comprova correção.</p><p id="delta" class="muted"></p><p id="data-age" class="muted"></p><div id="limits"></div></section>
 <h2>Cobertura da execução</h2><div id="tools" class="tools"></div>
 <h2>Achados e plano de correção</h2><p id="notice" class="muted"></p>
-<div class="controls"><input id="search" type="search" placeholder="Buscar título, arquivo, pacote ou regra" aria-label="Buscar achados"><select id="severity" aria-label="Severidade"><option value="">Todas as severidades</option>critical</option><option>high</option><option>medium</option><option>low</option><option>info</option></select><select id="category" aria-label="Categoria"><option value="">Todas as categorias</option><option>sast</option><option>sca</option><option>secret</option><option>dast</option></select><select id="source" aria-label="Ferramenta"><option value="">Todas as ferramentas</option></select></div>
+<div class="controls"><input id="search" type="search" placeholder="Buscar título, arquivo, pacote ou regra" aria-label="Buscar achados"><select id="project-filter" aria-label="Projeto"><option value="">Todos os projetos</option></select><select id="severity" aria-label="Severidade"><option value="">Todas as severidades</option>critical</option><option>high</option><option>medium</option><option>low</option><option>info</option></select><select id="category" aria-label="Categoria"><option value="">Todas as categorias</option><option>sast</option><option>sca</option><option>secret</option><option>dast</option></select><select id="source" aria-label="Ferramenta"><option value="">Todas as ferramentas</option></select></div>
 <p id="result-count" aria-live="polite"></p><div id="findings"></div>
 <noscript>Ative JavaScript para usar o dashboard ou abra report.html.</noscript>
 </main><script id="report-data" type="application/json">__REPORT_DATA__</script>
@@ -74,6 +75,10 @@ const element=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==und
 byId('project').textContent=s.project||'Análise de segurança';
 byId('run').textContent=s.run_id+' · '+s.generated_at;
 byId('gate').textContent='Gate: '+s.gate.result;
+byId('hierarchy').textContent=s.report_level==='project'?'Grupo: '+s.group+' · Projeto: '+s.project:'Grupo: '+s.group+' · Visão consolidada';
+if(s.parent_dashboard){const a=element('a','← Dashboard do grupo');a.setAttribute('href','../../index.html');byId('projects').append(a);}
+for(const project of s.projects||[]){if(!['frontend','backend'].includes(project.name))continue;const a=element('a',project.name+' · '+project.counts.total+' achados · '+project.gate);a.setAttribute('href','projects/'+project.name+'/index.html');byId('projects').append(a);}
+for(const project of [...new Set(data.findings.map(f=>f.project).filter(Boolean))].sort()){const o=element('option',project);o.value=project;byId('project-filter').append(o);}
 const labels={critical:'Críticos',high:'Altos',medium:'Médios',low:'Baixos',info:'Informativos'};
 for(const [sev,label] of Object.entries(labels)){const card=element('div',undefined,'card '+sev);card.append(element('small',label),element('strong',String(s.counts[sev]||0)));byId('cards').append(card);}
 byId('scope').textContent=Object.entries(s.scope||{}).filter(([,v])=>v).map(([k,v])=>k+': '+v).join(' · ')||'Escopo não informado';
@@ -81,17 +86,20 @@ byId('auth').textContent='DAST: '+(s.dast?.mode||'não informado')+' · Autentic
 byId('delta').textContent=s.delta?(s.delta.error||('Comparação: '+s.delta.new+' novos · '+s.delta.persisting+' persistentes · '+s.delta.fixed+' não observados novamente; confirmar cobertura equivalente.')):'Sem comparação com execução anterior.';
 for(const tool of s.tools||[]){const box=element('div',undefined,'tool '+tool.status);box.append(element('strong',tool.stage+' · '+tool.status),element('div',tool.detail,'muted'));byId('tools').append(box);}
 if(!(s.tools||[]).length)byId('tools').textContent='Sem registros de execução: cobertura não comprovada.';
+byId('data-age').textContent=s.security_data?.updated_at?'Bases/regras verificadas em: '+s.security_data.updated_at+' · Base Grype: '+(s.security_data.grype?.built||'consultar manifesto'):'Versões das bases: manifesto não registrado nesta execução.';
+for(const limit of s.limitations||[])byId('limits').append(element('p',limit,'muted'));
 byId('notice').textContent=data.plan.notice;
 for(const source of [...new Set(data.findings.map(f=>f.source))].sort()){const o=element('option',source);o.value=source;byId('source').append(o);}
 const plans=new Map(data.plan.items.map(p=>[p.finding_id,p]));
 function render(){
- const q=byId('search').value.toLocaleLowerCase(),sev=byId('severity').value,cat=byId('category').value,src=byId('source').value;
- const filtered=data.findings.filter(f=>(!sev||f.severity===sev)&&(!cat||f.category===cat)&&(!src||f.source===src)&&JSON.stringify(f).toLocaleLowerCase().includes(q));
+ const q=byId('search').value.toLocaleLowerCase(),sev=byId('severity').value,cat=byId('category').value,src=byId('source').value,project=byId('project-filter').value;
+ const filtered=data.findings.filter(f=>(!project||f.project===project)&&(!sev||f.severity===sev)&&(!cat||f.category===cat)&&(!src||f.source===src)&&JSON.stringify(f).toLocaleLowerCase().includes(q));
  byId('findings').replaceChildren();byId('result-count').textContent=filtered.length+' de '+data.findings.length+' achados';
  for(const f of filtered){const p=plans.get(f.id),card=element('article');
- card.append(element('span',f.severity,'tag '+f.severity),element('span',f.source+' · '+f.category,'tag'),element('h3',f.id+' · '+f.title));
+ card.append(element('span',f.severity,'tag '+f.severity),element('span',f.source+' · '+f.category+' · '+(f.project||''),'tag'),element('h3',f.id+' · '+f.title));
  card.append(element('p',Object.entries(f.location||{}).map(([k,v])=>k+': '+v).join(' · '),'muted'));
  if(f.description)card.append(element('p',f.description));
+ if(f.review){card.append(element('strong','Triagem · '+f.review.status),element('p',f.review.rationale));if(f.review.action)card.append(element('p','Recomendação contextual: '+f.review.action));}
  const details=element('details');details.append(element('summary','Evidência e plano de correção'));
  if(f.evidence)details.append(element('pre',f.evidence));
  if(p){for(const [label,value] of [['Prioridade',p.priority+' · requer revisão'],['Ação proposta',p.action],['Como validar',p.validation],['Critério de aceite',p.acceptance]]){details.append(element('strong',label),element('p',value));}}
@@ -100,6 +108,6 @@ function render(){
  card.append(details);byId('findings').append(card);}
  if(!filtered.length)byId('findings').append(element('p','Nenhum achado corresponde aos filtros. Confira a cobertura das ferramentas.','box'));
 }
-for(const id of ['search','severity','category','source'])byId(id).addEventListener('input',render);
+for(const id of ['search','severity','category','source','project-filter'])byId(id).addEventListener('input',render);
 render();
 </script></body></html>'''

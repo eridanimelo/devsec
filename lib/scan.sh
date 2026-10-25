@@ -88,7 +88,9 @@ cmd_scan() {
   # shellcheck source=./dast.sh
   source "$DEVSEC_ROOT/lib/dast.sh"
 
+  source "$DEVSEC_ROOT/lib/security_data.sh"
   run_preflight
+  prepare_security_data
 
   trap 'cleanup_dast_auth' EXIT
   application_up || true

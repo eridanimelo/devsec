@@ -148,6 +148,7 @@ init_run() {
   jq -n \
     --arg run_id "$RUN_ID" \
     --arg project "$RUN_NAME" \
+    --arg group "${GROUP_NAME:-$RUN_NAME}" \
     --arg started_at "$(now_iso)" \
     --arg profile "$PROFILE_FILE" \
     --arg backend "$BACKEND_PATH" \
@@ -160,6 +161,7 @@ init_run() {
     '{
       run_id: $run_id,
       project: $project,
+      group: $group,
       started_at: $started_at,
       finished_at: null,
       profile: $profile,

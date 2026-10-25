@@ -95,7 +95,11 @@ application_up() {
   local args=(compose --project-directory "$compose_dir" -f "$APP_COMPOSE_FILE")
   [[ -n "${APP_COMPOSE_ENV_FILE:-}" ]] && args+=(--env-file "$APP_COMPOSE_ENV_FILE")
   step "Aplicação de teste (Docker Compose)"
-  (cd "$compose_dir" && docker "${args[@]}" up -d --build) >"$RUN_DIR/logs/application-compose.log" 2>&1 || rc=$?
+  local start_args=(up -d --no-build --pull never)
+  if is_true "${APP_ALLOW_BUILD_WITH_INTERNAL_REGISTRIES:-0}"; then
+    start_args=(up -d --build)
+  fi
+  (cd "$compose_dir" && docker "${args[@]}" "${start_args[@]}") >"$RUN_DIR/logs/application-compose.log" 2>&1 || rc=$?
   if [[ "$rc" -ne 0 ]]; then
     warn "Compose da aplicação falhou; veja logs/application-compose.log"
     record_status "application" "failed" "Compose da aplicação falhou; consulte o log local" "$(( $(epoch_s) - started ))"

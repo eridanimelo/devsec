@@ -30,10 +30,13 @@ run_secrets() {
       args=(detect --source /repo --report-format json --report-path "/out/gitleaks-$name.json" --redact --exit-code 0)
     fi
 
-    docker run --rm \
+    if [[ "${SECURITY_DATA_READY:-0}" != "1" ]]; then rc=1; continue; fi
+    local image
+    image="$(security_image gitleaks)" || { rc=1; continue; }
+    docker run --rm --pull=never --network=none \
       -v "$path:/repo:ro" \
       -v "$out_dir:/out" \
-      zricethezav/gitleaks:latest "${args[@]}" \
+      "$image" "${args[@]}" \
       >>"$RUN_DIR/logs/gitleaks-$name.log" 2>&1 || code=$?
 
     if [[ "$code" -ne 0 ]] || [[ ! -f "$out" ]]; then

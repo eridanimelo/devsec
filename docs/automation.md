@@ -55,7 +55,7 @@ APP_START_TIMEOUT=180
 ```
 
 Paths são relativos à raiz do devsec ou absolutos. O CLI executa
-`docker compose up -d --build` com o diretório do Compose como project-directory,
+`docker compose up -d --no-build --pull never` com o diretório do Compose como project-directory,
 antes de verificar APP_URL e API_URL. O perfil Achernar já aponta para o Compose
 existente em `../ACHERNAR/achernar_identity/docker/docker-compose.yml`; ele exige
 as variáveis próprias da aplicação, como DATABASE_PASSWORD e ADMIN_EMAIL, em seu
@@ -352,3 +352,120 @@ Não execute npm install, builds, testes ou correções dentro da aplicação du
 a análise. O build Docker previsto no README compila dentro das imagens.
 Contas extras de teste podem ser criadas pela API/interface se necessárias para
 validar permissões, preservando contas e dados existentes.
+
+## Grupo e projetos independentes
+
+`GROUP_NAME=achernar_identity` identifica o grupo. `BACKEND_PATH` e `FRONTEND_PATH`
+identificam os dois projetos, `backend` e `frontend`.
+
+```text
+reports/runs/<run-id>/
+├── index.html                    # grupo: achernar_identity
+├── findings.json                 # consolidado com group/project em cada achado
+├── remediation-plan.md           # plano do grupo
+└── projects/
+    ├── frontend/
+    │   ├── index.html
+    │   ├── findings.json
+    │   ├── summary.json
+    │   └── remediation-plan.md
+    └── backend/
+        ├── index.html
+        ├── findings.json
+        ├── summary.json
+        └── remediation-plan.md
+```
+
+Cada projeto também recebe `report.html`, `report.md`, `context.md` e plano JSON.
+O consolidado possui links para os projetos e filtro por projeto. Mesmo CVE ou
+regra presente nos dois códigos gera duas ocorrências independentes.
+SAST/SCA/segredos são atribuídos pelo componente de origem da saída do scanner.
+DAST da URL web pertence ao frontend; endpoints do host da API e rotas `/api`
+do proxy pertencem ao backend. Alertas sem atribuição segura ficam no grupo como
+`shared`, sem serem duplicados artificialmente nos projetos.
+
+A cobertura operacional ainda é registrada por estágio do grupo: os relatórios
+individuais indicam explicitamente esse status herdado e mantêm falhas visíveis.
+Os relatórios individuais não exibem delta próprio nesta versão; a comparação
+entre execuções permanece no consolidado. Saídas antigas sem `group` usam o nome
+da execução como grupo. Regenere o relatório para obter os dashboards separados:
+`./bin/devsec report --run <id>` (não executa novo scan).
+
+## Dependency-Track: bases públicas, cruzamento local
+
+Para a instância 4.14.5, `lib/dtrack_privacy.py` aplica e verifica:
+
+- Analisador interno habilitado.
+- OSV com os ecossistemas completos `Maven;npm` (download público de bases).
+- OSS Index, NPM Audit, Snyk, VulnDB e Trivy externo desabilitados.
+- Sincronizações de aliases dos serviços de análise externa desabilitadas.
+- Repositórios não internos desabilitados para impedir consultas de metadados por pacote.
+
+Execução com credenciais locais já configuradas (não imprime tokens):
+
+```bash
+bash -c 'source lib/common.sh; load_profile profiles/achernar-identity.env; python3 lib/dtrack_privacy.py'
+```
+
+O script grava somente um snapshot dos flags alterados e o resultado da verificação
+em `reports/dtrack-privacy/`. Não exporta segredos. A configuração é persistida no
+banco do DTrack; não é necessário reaplicá-la a cada scan. Não use reset dos volumes.
+A primeira sincronização é assíncrona. Um reinício apenas do apiserver dispara o
+espelhamento OSV conforme o comportamento da versão 4.14.5. Aguarde os logs de
+conclusão e reenvie os SBOMs para reavaliar os projetos com a base carregada.
+
+Referências: https://docs.dependencytrack.org/datasources/osv/ e
+https://docs.dependencytrack.org/datasources/repositories/.
+
+Esses ajustes controlam as integrações conhecidas; não substituem uma auditoria
+de tráfego ou política de saída no firewall/proxy. Os serviços de análise externa
+não devem ser reativados em ambiente corporativo sem autorização. A aplicação
+avaliada não é alterada por esse procedimento.
+
+## Manutenção das bases e política de saída
+
+```bash
+./bin/devsec update          # verifica/atualiza cache público, sem carregar perfil
+./bin/devsec update --force  # força nova verificação pública
+./bin/devsec data-status     # validade por 24h, hash e IDs das imagens
+```
+
+O atualizador baixa o pacote Semgrep `p/owasp-top-ten` e a base Grype. Monta apenas
+`.cache/security`, nunca código, SBOMs ou relatórios. Imagens ausentes são baixadas;
+imagens já instaladas são reutilizadas e registradas por ID imutável. Este comando
+não é um upgrade automático das ferramentas ou dos serviços Docker.
+O pacote Semgrep é validado sem rede antes da publicação do manifesto. Outras
+configurações SEMGREP_CONFIG são recusadas explicitamente neste modo.
+
+O scan verifica o cache e atualiza quando necessário (24h). Para impedir downloads
+no scan, configure AUTO_UPDATE_SECURITY_DATA=0 e execute update separadamente antes.
+Cache ausente/inválido/desatualizado deixa a cobertura incompleta. A base Grype
+é compartilhada entre projetos; o scanner valida também a idade da própria base.
+O manifesto é copiado para `security-data.json` em cada execução e sua data aparece
+no dashboard. Um relatório antigo não recebe data nova sem novo scan.
+
+Semgrep, Grype, Syft e Gitleaks executam em containers com `--network=none` e
+`--pull=never`. Código e regras são montados somente leitura. Não há fallback
+silencioso para scanner no host ou cloud. Métricas do Semgrep e checagens de versão
+ficam desativadas. O Grype não faz downloads quando recebe o SBOM.
+
+URLs que recebem dados (Sonar, DTrack, ZAP, aplicação e login) precisam usar os hosts
+locais padrão ou constar explicitamente em INTERNAL_SERVICE_HOSTS, separado por
+vírgulas. Cadastre somente destinos corporativos aprovados. Antes do upload de
+cada SBOM, a política interna do Dependency-Track é verificada/aplicada.
+O polling do BOM só considera conclusão quando a API retorna processing=false;
+HTTP 200 sozinho não indica conclusão da análise.
+
+Subir a aplicação usa `up -d --no-build --pull never` por padrão: um build com
+npm/Maven pode consultar pacotes em repositórios externos. Para permitir build,
+configure primeiro registros/mirrors corporativos e então defina
+APP_ALLOW_BUILD_WITH_INTERNAL_REGISTRIES=1 no perfil. O pipeline não comprova
+sozinho a configuração interna dos Dockerfiles/registries; não use essa exceção
+sem validação corporativa. Nenhum arquivo da aplicação é modificado.
+
+Estes controles não equivalem a bloqueio global de egress. SonarQube, DTrack, ZAP
+e a aplicação precisam de rede para seus serviços locais. Restrinja sua saída em
+firewall/proxy corporativo, incluindo notificações, telemetria e redirecionamentos.
+Scripts legados em scans/ não têm todas as garantias do pipeline integrado; use
+bin/devsec. Nenhuma regra autoriza enviar dados corporativos para uma IA externa:
+quando o agente não for aprovado, execute somente o CLI e consulte resultados locais.

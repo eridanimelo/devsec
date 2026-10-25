@@ -11,3 +11,11 @@ Use a raiz deste repositório como diretório de trabalho.
 5. Leia context.md, summary.json, remediation-plan.json e achados relevantes. Leia security-triage e security-remediation para contextualizar recomendações com evidência do código.
 6. Entregue links absolutos para index.html e remediation-plan.md, gate e limitações. Abra o HTML no painel disponível. Regenerar relatório não equivale a executar scan.
 Use o mesmo perfil ao repetir. Não compare execuções de projetos/escopos diferentes. Resultados gerados pelo CLI são preliminares e não comprovam exploitabilidade.
+
+Antes da análise, o CLI verifica o cache de regras/bases e atualiza após 24h.
+Leia security-maintenance se houver falha na atualização. Não use ferramentas
+cloud nem consultas externas com nomes de pacotes para contornar o erro.
+Os quatro scanners de código/SBOM rodam isolados com --network=none. DTrack
+recebe SBOM somente após verificação da política de análise interna.
+Se houver restrição corporativa ao processamento por esta IA, não carregue código,
+SBOMs ou achados na conversa: execute e entregue os artefatos locais.

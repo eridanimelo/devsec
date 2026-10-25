@@ -38,6 +38,13 @@ A entrega fica em `reports/runs/<id>/index.html`, com filtros e cobertura, e
 correções de código e DAST ativo dependem de pedidos específicos.
 Veja [configuração e funcionamento](docs/automation.md).
 
+## Atualização local das bases
+
+Use `./bin/devsec update` para baixar regras e bases públicas sem montar dados da
+aplicação. `./bin/devsec data-status` mostra datas e validade. O scan reutiliza esse
+cache e roda Semgrep/Grype/Syft/Gitleaks sem rede. Veja os limites e a configuração
+de destinos internos em [Manutenção e privacidade](docs/automation.md).
+
 ## 1. Pré-requisitos
 
 - Docker + Docker Compose v2 (`docker compose version`)

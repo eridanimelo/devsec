@@ -43,22 +43,13 @@ generate_sbom() {
   local out="$out_dir/syft-$name.cdx.json"
 
   log "Syft: $name"
-  if have syft; then
-    syft "dir:$path" -o "cyclonedx-json=$out" -q >>"$RUN_DIR/logs/syft-$name.log" 2>&1 || {
-      warn "Syft falhou em $name"
-      return 1
-    }
-  else
-    docker run --rm \
-      -v "$path:/src:ro" \
-      -v "$out_dir:/out" \
-      ghcr.io/anchore/syft:latest \
-      "dir:/src" -o "cyclonedx-json=/out/syft-$name.cdx.json" -q \
-      >>"$RUN_DIR/logs/syft-$name.log" 2>&1 || {
-      warn "Syft falhou em $name"
-      return 1
-    }
-  fi
+  [[ "${SECURITY_DATA_READY:-0}" == "1" ]] || { warn "cache de segurança indisponível"; return 1; }
+  local image
+  image="$(security_image syft)" || return 1
+  docker run --rm --pull=never --network=none \
+    -v "$path:/src:ro" -v "$out_dir:/out" \
+    "$image" "dir:/src" -o "cyclonedx-json=/out/syft-$name.cdx.json" -q \
+    >>"$RUN_DIR/logs/syft-$name.log" 2>&1 || return 1
 
   if [[ -s "$out" ]]; then
     local n
@@ -75,9 +66,15 @@ run_grype() {
   local out="$dir/grype-$name.json"
 
   log "Grype: $name"
-  docker run --rm \
+  [[ "${SECURITY_DATA_READY:-0}" == "1" ]] || return 1
+  local image
+  image="$(security_image grype)" || return 1
+  docker run --rm --pull=never --network=none \
     -v "$dir:/work" \
-    ghcr.io/anchore/grype:latest \
+    -v "$SECURITY_CACHE/grype:/db:ro" \
+    -e GRYPE_DB_CACHE_DIR=/db -e GRYPE_DB_AUTO_UPDATE=false \
+    -e GRYPE_CHECK_FOR_APP_UPDATE=false -e GRYPE_DB_VALIDATE_AGE=true \
+    "$image" \
     "sbom:/work/syft-$name.cdx.json" -o json --file "/work/grype-$name.json" -q \
     >>"$RUN_DIR/logs/grype-$name.log" 2>&1 || {
     warn "Grype falhou em $name (o SCA do Dependency-Track continua válido)"
@@ -144,7 +141,7 @@ ensure_dtrack_key() {
     return 1
   fi
 
-  DTRACK_API_KEY="$key"
+  export DTRACK_API_KEY="$key"
   ok "API key do Dependency-Track criada"
   return 0
 }
@@ -153,11 +150,12 @@ wait_dtrack_bom() {
   local token="$1" timeout="${2:-300}"
   local i=0
   while (( i < timeout )); do
-    local code
-    code="$(curl -sS -o /dev/null -w '%{http_code}' \
+    local code body
+    body="$RUN_DIR/raw/sca/.bom-processing.json"
+    code="$(curl -sS -o "$body" -w '%{http_code}' \
       -H "X-Api-Key: $DTRACK_API_KEY" \
       "$DTRACK_URL/api/v1/bom/token/$token" 2>/dev/null || echo 000)"
-    [[ "$code" == "200" ]] && return 0
+    if [[ "$code" == "200" ]] && jq -e 'type == "object" and .processing == false' "$body" >/dev/null 2>&1; then return 0; fi
     sleep 5
     i=$((i + 5))
   done
@@ -172,6 +170,11 @@ run_dtrack() {
   local out="$RUN_DIR/raw/sca/dtrack-findings-$name.json"
 
   ensure_dtrack_key || return 1
+  # Verificar a política antes de entregar um SBOM ao serviço local.
+  python3 "$DEVSEC_ROOT/lib/dtrack_privacy.py" >>"$RUN_DIR/logs/dtrack-privacy.log" 2>&1 || {
+    warn "política local do DTrack não pôde ser verificada; upload cancelado"
+    return 1
+  }
 
   log "Dependency-Track: enviando SBOM de $name"
   local resp token

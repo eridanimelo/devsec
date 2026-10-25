@@ -20,6 +20,8 @@ usage() {
 devsec — pipeline local de segurança
 
 Comandos:
+  update [--force]              Atualiza regras/base pública sem montar código
+  data-status                   Mostra validade, datas e versões do cache
   analyze [--profile <arquivo>] Analisa o projeto padrão e gera dashboard + plano
   doctor                         Verifica pré-requisitos (Docker, jq, Python, stack)
   scan --profile <arquivo.env>   Executa o pipeline e gera o relatório
@@ -48,6 +50,12 @@ cmd="${1:-help}"
 shift || true
 
 case "$cmd" in
+  update)
+    python3 "$DEVSEC_ROOT/lib/security_data.py" update "$@"
+    ;;
+  data-status)
+    python3 "$DEVSEC_ROOT/lib/security_data.py" status "$@"
+    ;;
   analyze|analyse|analisar)
     source "$DEVSEC_ROOT/lib/scan.sh"
     cmd_analyze "$@"

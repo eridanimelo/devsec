@@ -102,7 +102,19 @@ run_preflight() {
   [[ -z "${APP_COMPOSE_ENV_FILE:-}" ]] || [[ -f "$APP_COMPOSE_ENV_FILE" ]] || die "APP_COMPOSE_ENV_FILE não existe"
   [[ "${APP_START_TIMEOUT:-180}" =~ ^[0-9]+$ ]] || die "APP_START_TIMEOUT deve ser inteiro"
 
-  ok "caminhos válidos"
+  PYTHONPATH="$DEVSEC_ROOT/lib" python3 - <<'PYTHON'
+import os
+from network_policy import require_internal_url
+for key in ('APP_URL', 'API_URL', 'SONAR_URL', 'DTRACK_URL', 'ZAP_URL', 'AUTH_LOGIN_URL', 'AUTH_CSRF_URL', 'AUTH_VERIFY_URL', 'APP_HEALTH_URL'):
+    value = os.environ.get(key)
+    if value:
+        try:
+            require_internal_url(value)
+        except ValueError:
+            raise SystemExit(key + ': destino não aprovado na allowlist interna')
+PYTHON
+  [[ "$?" -eq 0 ]] || die "política de destinos internos não atendida"
+  ok "caminhos e destinos internos válidos"
 
   if is_true "$ENABLE_DAST"; then
     [[ -n "${APP_URL:-}" || -n "${API_URL:-}" ]] || die "DAST habilitado sem APP_URL/API_URL"

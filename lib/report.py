@@ -25,6 +25,7 @@ import os
 import re
 import sys
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 SEVERITIES = ["critical", "high", "medium", "low", "info"]
 SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
@@ -489,23 +490,45 @@ def correlate(findings: list[dict]) -> None:
 
 def collect(run_dir: str) -> tuple[list[dict], list[dict], dict]:
     findings: list[dict] = []
+    run = load_json(os.path.join(run_dir, "run.json"), {})
+    scope = run.get("scope", {})
 
-    for path in sorted(glob.glob(os.path.join(run_dir, "raw/sast/semgrep-*.json"))):
-        findings += from_semgrep(path)
-    for path in sorted(glob.glob(os.path.join(run_dir, "raw/sast/sonar-issues-*.json"))):
-        findings += from_sonar_issues(path)
-    for path in sorted(glob.glob(os.path.join(run_dir, "raw/sast/sonar-hotspots-*.json"))):
-        findings += from_sonar_hotspots(path)
-    for path in sorted(glob.glob(os.path.join(run_dir, "raw/sca/grype-*.json"))):
-        findings += from_grype(path)
-    for path in sorted(glob.glob(os.path.join(run_dir, "raw/sca/dtrack-findings-*.json"))):
-        findings += from_dtrack(path)
-    for path in sorted(glob.glob(os.path.join(run_dir, "raw/secrets/gitleaks-*.json"))):
-        findings += from_gitleaks(path)
+    def add(items, project):
+        for finding in items:
+            finding["project"] = project
+            finding["group"] = run.get("group") or run.get("project", "")
+            # Mesma CVE/regra nos dois projetos são ocorrências independentes.
+            finding["fingerprint"] = digest(project, finding["fingerprint"])
+            findings.append(finding)
+
+    scanners = (
+        ("sast/semgrep-*.json", from_semgrep),
+        ("sast/sonar-issues-*.json", from_sonar_issues),
+        ("sast/sonar-hotspots-*.json", from_sonar_hotspots),
+        ("sca/grype-*.json", from_grype),
+        ("sca/dtrack-findings-*.json", from_dtrack),
+        ("secrets/gitleaks-*.json", from_gitleaks),
+    )
+    for pattern, normalize in scanners:
+        for path in sorted(glob.glob(os.path.join(run_dir, "raw", pattern))):
+            project = next((name for name in ("frontend", "backend")
+                            if os.path.basename(path).endswith("-" + name + ".json")), "shared")
+            add(normalize(path), project)
     for path in sorted(glob.glob(os.path.join(run_dir, "raw/dast/*.json"))):
         if os.path.basename(path) in ("login-response.json", "playwright-headers.json"):
             continue
-        findings += from_zap(path)
+        for finding in from_zap(path):
+            url = urlsplit(finding.get("location", {}).get("url", ""))
+            app, api = urlsplit(scope.get("app_url") or ""), urlsplit(scope.get("api_url") or "")
+            # Rotas /api no proxy do frontend pertencem ao backend.
+            if scope.get("backend") and (url.netloc == api.netloc or
+                    (url.netloc == app.netloc and (url.path == "/api" or url.path.startswith("/api/")))):
+                owner = "backend"
+            elif scope.get("frontend") and url.netloc == app.netloc:
+                owner = "frontend"
+            else:
+                owner = "shared"
+            add([finding], owner)
 
     statuses = []
     for path in sorted(glob.glob(os.path.join(run_dir, "raw/*/status.json"))):
@@ -651,6 +674,8 @@ def build_summary(run_dir, findings, statuses, run, delta, gate) -> dict:
     return {
         "run_id": run.get("run_id", os.path.basename(run_dir)),
         "project": run.get("project", ""),
+        "group": run.get("group") or run.get("project", ""),
+        "report_level": run.get("report_level", "group"),
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "started_at": run.get("started_at"),
         "finished_at": run.get("finished_at"),
@@ -661,6 +686,8 @@ def build_summary(run_dir, findings, statuses, run, delta, gate) -> dict:
         "by_source": by_source,
         "gate": gate,
         "tools": statuses,
+        "limitations": run.get("limitations", []),
+        "security_data": run.get("security_data", {}),
         "delta": delta,
         "top": top,
         "artifacts": {
@@ -1108,25 +1135,9 @@ def render_context(summary, findings) -> str:
 # main
 # --------------------------------------------------------------------------- #
 
-def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description="Normaliza achados e gera o relatório do devsec.")
-    parser.add_argument("--run-dir", required=True)
-    parser.add_argument("--baseline", default="")
-    parser.add_argument("--fail-on", default="")
-    args = parser.parse_args(argv)
-
-    run_dir = os.path.abspath(args.run_dir)
-    if not os.path.isdir(run_dir):
-        print(f"run-dir não encontrado: {run_dir}", file=sys.stderr)
-        return 1
-
-    findings, statuses, run = collect(run_dir)
-    fail_on = args.fail_on or run.get("gate_fail_on") or os.environ.get("GATE_FAIL_ON", "critical,high")
-    gate = evaluate_gate(findings, statuses, fail_on)
-    delta = compute_delta(run_dir, findings, args.baseline) if args.baseline else None
-    summary = build_summary(run_dir, findings, statuses, run, delta, gate)
-
+def write_reports(run_dir, summary, findings):
     plan = build_plan(findings)
+    plan.update(group=summary.get("group"), project=summary.get("project"), report_level=summary.get("report_level"))
     dump_json(os.path.join(run_dir, "remediation-plan.json"), plan)
     with open(os.path.join(run_dir, "remediation-plan.md"), "w", encoding="utf-8") as fh:
         fh.write(plan_markdown(plan))
@@ -1142,6 +1153,64 @@ def main(argv: list[str]) -> int:
         fh.write(render_html(summary, findings))
     with open(os.path.join(run_dir, "context.md"), "w", encoding="utf-8") as fh:
         fh.write(render_context(summary, findings))
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description="Normaliza achados e gera o relatório do devsec.")
+    parser.add_argument("--run-dir", required=True)
+    parser.add_argument("--baseline", default="")
+    parser.add_argument("--fail-on", default="")
+    args = parser.parse_args(argv)
+
+    run_dir = os.path.abspath(args.run_dir)
+    if not os.path.isdir(run_dir):
+        print(f"run-dir não encontrado: {run_dir}", file=sys.stderr)
+        return 1
+
+    findings, statuses, run = collect(run_dir)
+    run["security_data"] = load_json(os.path.join(run_dir, "security-data.json"), {})
+    assessment = load_json(os.path.join(run_dir, "assessment.json"), {})
+    if isinstance(assessment, dict):
+        run["limitations"] = assessment.get("limitations", [])
+    reviews = load_json(os.path.join(run_dir, "triage.json"), {})
+    if isinstance(reviews, dict):
+        for finding in findings:
+            review = reviews.get(finding["fingerprint"])
+            if isinstance(review, dict):
+                finding["review"] = {k: str(review[k]) for k in ("status", "rationale", "action") if k in review}
+    fail_on = args.fail_on or run.get("gate_fail_on") or os.environ.get("GATE_FAIL_ON", "critical,high")
+    gate = evaluate_gate(findings, statuses, fail_on)
+    delta = compute_delta(run_dir, findings, args.baseline) if args.baseline else None
+    summary = build_summary(run_dir, findings, statuses, run, delta, gate)
+
+    group = run.get("group") or run.get("project", "")
+    summary["group"] = group
+    summary["project"] = group
+    projects = []
+    for project in ("frontend", "backend"):
+        items = [f for f in findings if f.get("project") == project]
+        if not run.get("scope", {}).get(project) and not items:
+            continue
+        project_dir = os.path.join(run_dir, "projects", project)
+        os.makedirs(project_dir, exist_ok=True)
+        project_scope = {project: run.get("scope", {}).get(project)}
+        url_key = "app_url" if project == "frontend" else "api_url"
+        project_scope[url_key] = run.get("scope", {}).get(url_key)
+        project_run = dict(run, group=group, project=project, report_level="project", scope=project_scope)
+        # Os scanners atuais registram status por estágio do grupo. Não atribuir
+        # sucesso individual quando a execução do grupo foi parcial.
+        project_statuses = [dict(status, coverage_scope="group",
+            detail=status.get("detail", "") + " (status herdado da execução do grupo)") for status in statuses]
+        child = build_summary(project_dir, items, project_statuses, project_run, None,
+                              evaluate_gate(items, project_statuses, fail_on))
+        child["parent_dashboard"] = "../../index.html"
+        child["artifacts"]["raw"] = os.path.join(run_dir, "raw")
+        child["artifacts"]["logs"] = os.path.join(run_dir, "logs")
+        write_reports(project_dir, child, items)
+        projects.append({"name": project, "counts": child["counts"], "gate": child["gate"]["result"],
+                         "dashboard": "projects/" + project + "/index.html"})
+    summary["projects"] = projects
+    write_reports(run_dir, summary, findings)
 
     return 0
 

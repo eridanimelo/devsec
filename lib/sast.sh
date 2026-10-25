@@ -47,6 +47,10 @@ run_semgrep() {
   component_names
   local out_dir="$RUN_DIR/raw/sast"
   local rc=0
+  if [[ "${SEMGREP_CONFIG:-p/owasp-top-ten}" != "p/owasp-top-ten" ]]; then
+    warn "Modo local usa o pacote validado p/owasp-top-ten; configuração alternativa exige preparação de regras locais"
+    return 1
+  fi
 
   local i
   for i in "${!COMPONENT_NAMES[@]}"; do
@@ -56,35 +60,21 @@ run_semgrep() {
 
     log "Semgrep: $name ($path)"
 
-    # `auto` exige métricas ligadas; configs explícitas funcionam com métricas off.
-    local metrics_flag="--metrics=off"
-    case "$SEMGREP_CONFIG" in *auto*) metrics_flag="--metrics=on" ;; esac
-
-    local config_args=()
-    local cfg
-    for cfg in $SEMGREP_CONFIG; do
-      config_args+=(--config "$cfg")
-    done
-    [[ ${#config_args[@]} -gt 0 ]] || config_args=(--config "p/owasp-top-ten")
-
-    local code=0
-    if have semgrep; then
-      semgrep scan \
-        "${config_args[@]}" \
-        --json \
-        "$metrics_flag" \
-        --quiet \
-        --output "$out" \
-        "$path" >>"$RUN_DIR/logs/semgrep-$name.log" 2>&1 || code=$?
-    else
-      docker run --rm \
-        -v "$path:/src:ro" \
-        -v "$out_dir:/out" \
-        semgrep/semgrep:latest \
-        semgrep scan "${config_args[@]}" --json "$metrics_flag" --quiet \
-        --output "/out/semgrep-$name.json" /src \
-        >>"$RUN_DIR/logs/semgrep-$name.log" 2>&1 || code=$?
+    if [[ "${SECURITY_DATA_READY:-0}" != "1" ]]; then
+      warn "Regras locais indisponíveis; execute ./bin/devsec update"
+      rc=1
+      continue
     fi
+    local image
+    image="$(security_image semgrep)" || { rc=1; continue; }
+    local code=0
+    docker run --rm --pull=never --network=none \
+      -v "$path:/src:ro" -v "$out_dir:/out" \
+      -v "$SECURITY_CACHE/rules.yaml:/rules.yaml:ro" \
+      -e SEMGREP_SEND_METRICS=off "$image" \
+      semgrep scan --config /rules.yaml --metrics=off --disable-version-check \
+      --json --quiet --output "/out/semgrep-$name.json" /src \
+      >>"$RUN_DIR/logs/semgrep-$name.log" 2>&1 || code=$?
 
     # scan sem --error retorna 0 mesmo com achados; >1 indica erro.
     if [[ "$code" -gt 1 ]] || [[ ! -s "$out" ]]; then
