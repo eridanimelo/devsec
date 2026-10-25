@@ -15,6 +15,29 @@ Versões validadas: **SonarQube 26.10.0 Community**, **Dependency-Track 4.14.5**
 
 ---
 
+## Análise com um pedido
+
+Neste repositório, peça ao agente **“Analise meu projeto”**. O `AGENTS.md` e as
+skills locais direcionam o fluxo completo: Docker, SAST, SCA, segredos, DAST,
+dashboard e plano de correção.
+
+```bash
+./bin/devsec analyze --open
+# Outro alvo:
+./bin/devsec analyze --profile profiles/meu-projeto.env --open
+```
+
+O perfil padrão está em `config/default-profile` (Achernar Identity). Configure
+paths, URLs e autenticação no perfil; usuário e senha de teste ficam em
+`<perfil>.secrets.env`, ignorado pelo Git. `APP_COMPOSE_FILE` permite subir a
+aplicação com Docker antes do DAST; a stack de segurança também é iniciada.
+O Compose da aplicação precisa de seu ambiente/.env já configurado.
+
+A entrega fica em `reports/runs/<id>/index.html`, com filtros e cobertura, e
+`remediation-plan.md`, com ações e testes propostos. O scan padrão é passivo;
+correções de código e DAST ativo dependem de pedidos específicos.
+Veja [configuração e funcionamento](docs/automation.md).
+
 ## 1. Pré-requisitos
 
 - Docker + Docker Compose v2 (`docker compose version`)

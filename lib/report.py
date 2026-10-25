@@ -16,6 +16,7 @@ Uso:
 from __future__ import annotations
 
 import argparse
+from dashboard import build_plan, plan_markdown, render_dashboard
 import glob
 import hashlib
 import html
@@ -537,8 +538,12 @@ def resolve_baseline(run_dir: str, baseline: str) -> str | None:
         return None
     root = os.path.dirname(os.path.abspath(run_dir))
     if baseline == "last":
+        current = load_json(os.path.join(run_dir, "run.json"), {})
         candidates = sorted(
-            (d for d in glob.glob(os.path.join(root, "*")) if os.path.isdir(d) and os.path.abspath(d) != os.path.abspath(run_dir)),
+            (d for d in glob.glob(os.path.join(root, "*"))
+             if os.path.isdir(d) and os.path.abspath(d) != os.path.abspath(run_dir)
+             and load_json(os.path.join(d, "run.json"), {}).get("project") == current.get("project")
+             and load_json(os.path.join(d, "run.json"), {}).get("scope") == current.get("scope")),
             key=os.path.getmtime,
             reverse=True,
         )
@@ -553,6 +558,18 @@ def compute_delta(run_dir: str, findings: list[dict], baseline: str) -> dict | N
     base_dir = resolve_baseline(run_dir, baseline)
     if not base_dir:
         return {"baseline": None, "error": f"baseline não encontrada: {baseline}"}
+
+    current_run = load_json(os.path.join(run_dir, "run.json"), {})
+    base_run = load_json(os.path.join(base_dir, "run.json"), {})
+    if any(current_run.get(key) != base_run.get(key) for key in ("project", "scope", "dast")):
+        return {"baseline": os.path.basename(base_dir), "error": "Projeto, escopo ou modo DAST incompatível; comparação omitida."}
+    def coverage(directory):
+        return {s.get("stage"): s.get("status") for s in
+                (load_json(p, {}) for p in glob.glob(os.path.join(directory, "raw/*/status.json")))
+                if s.get("stage") in ("sast", "sca", "secrets", "dast")}
+    current_coverage, base_coverage = coverage(run_dir), coverage(base_dir)
+    if current_coverage != base_coverage or any(v in ("failed", "partial") for v in current_coverage.values()):
+        return {"baseline": os.path.basename(base_dir), "error": "Cobertura diferente ou incompleta; comparação omitida."}
 
     base_data = load_json(os.path.join(base_dir, "findings.json"), [])
     if not isinstance(base_data, list):
@@ -581,6 +598,12 @@ def evaluate_gate(findings: list[dict], statuses: list[dict], fail_on: str) -> d
     threshold = [s.strip().lower() for s in fail_on.split(",") if s.strip()]
     triggered = [sev for sev in threshold if counts.get(sev, 0) > 0]
 
+    # Sem execução comprovada, nunca sinalizar PASS por ausência de achados.
+    statuses = list(statuses)
+    for stage in ('sast', 'sca', 'secrets', 'dast'):
+        if not any(s.get('stage') == stage and s.get('status') == 'ok' for s in statuses):
+            if not any(s.get('stage') == stage and s.get('status') in ('failed', 'partial') for s in statuses):
+                statuses.append({'stage': stage, 'status': 'partial'})
     failed = [s for s in statuses if s.get("status") == "failed"]
     partial = [s for s in statuses if s.get("status") == "partial"]
 
@@ -632,7 +655,7 @@ def build_summary(run_dir, findings, statuses, run, delta, gate) -> dict:
         "started_at": run.get("started_at"),
         "finished_at": run.get("finished_at"),
         "scope": run.get("scope", {}),
-        "dast": run.get("dast", {}),
+        "dast": dict(run.get("dast", {}), auth_verified=run.get("auth_verified") == "true"),
         "counts": counts,
         "by_category": by_category,
         "by_source": by_source,
@@ -641,6 +664,9 @@ def build_summary(run_dir, findings, statuses, run, delta, gate) -> dict:
         "delta": delta,
         "top": top,
         "artifacts": {
+            "dashboard": os.path.join(run_dir, "index.html"),
+            "remediation_plan": os.path.join(run_dir, "remediation-plan.json"),
+            "remediation_plan_md": os.path.join(run_dir, "remediation-plan.md"),
             "findings": os.path.join(run_dir, "findings.json"),
             "report_md": os.path.join(run_dir, "report.md"),
             "report_html": os.path.join(run_dir, "report.html"),
@@ -1099,6 +1125,13 @@ def main(argv: list[str]) -> int:
     gate = evaluate_gate(findings, statuses, fail_on)
     delta = compute_delta(run_dir, findings, args.baseline) if args.baseline else None
     summary = build_summary(run_dir, findings, statuses, run, delta, gate)
+
+    plan = build_plan(findings)
+    dump_json(os.path.join(run_dir, "remediation-plan.json"), plan)
+    with open(os.path.join(run_dir, "remediation-plan.md"), "w", encoding="utf-8") as fh:
+        fh.write(plan_markdown(plan))
+    with open(os.path.join(run_dir, "index.html"), "w", encoding="utf-8") as fh:
+        fh.write(render_dashboard(summary, findings, plan))
 
     dump_json(os.path.join(run_dir, "findings.json"), findings)
     dump_json(os.path.join(run_dir, "summary.json"), summary)

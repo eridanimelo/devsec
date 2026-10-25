@@ -98,29 +98,23 @@ run_preflight() {
   [[ -z "${BACKEND_PATH:-}" ]] || [[ -d "$BACKEND_PATH" ]] || die "BACKEND_PATH não existe: $BACKEND_PATH"
   [[ -z "${FRONTEND_PATH:-}" ]] || [[ -d "$FRONTEND_PATH" ]] || die "FRONTEND_PATH não existe: $FRONTEND_PATH"
   [[ -z "${OPENAPI_SPEC:-}" ]] || [[ -f "$OPENAPI_SPEC" ]] || die "OPENAPI_SPEC não existe: $OPENAPI_SPEC"
+  [[ -z "${APP_COMPOSE_FILE:-}" ]] || [[ -f "$APP_COMPOSE_FILE" ]] || die "APP_COMPOSE_FILE não existe"
+  [[ -z "${APP_COMPOSE_ENV_FILE:-}" ]] || [[ -f "$APP_COMPOSE_ENV_FILE" ]] || die "APP_COMPOSE_ENV_FILE não existe"
+  [[ "${APP_START_TIMEOUT:-180}" =~ ^[0-9]+$ ]] || die "APP_START_TIMEOUT deve ser inteiro"
 
   ok "caminhos válidos"
 
   if is_true "$ENABLE_DAST"; then
     [[ -n "${APP_URL:-}" || -n "${API_URL:-}" ]] || die "DAST habilitado sem APP_URL/API_URL"
-    local target="${APP_URL:-$API_URL}"
-    if curl -fsS --max-time 8 -o /dev/null "$target" 2>/dev/null; then
-      ok "alvo acessível: $target"
-    elif curl -sS --max-time 8 -o /dev/null "$target" 2>/dev/null; then
-      ok "alvo acessível (resposta não-2xx): $target"
-    else
-      if is_true "${ALLOW_UNREACHABLE_TARGET:-0}"; then
-        warn "alvo inacessível: $target (ALLOW_UNREACHABLE_TARGET=1)"
-      else
-        die "alvo inacessível: $target — suba a aplicação ou use ALLOW_UNREACHABLE_TARGET=1"
-      fi
-    fi
   fi
 
-  if [[ "${AUTH_MODE:-none}" != "none" ]]; then
+  if is_true "$ENABLE_DAST" && [[ "${AUTH_MODE:-none}" != "none" && "${AUTH_MODE:-none}" != "header" ]]; then
     [[ -n "${AUTH_USERNAME:-}" && -n "${AUTH_PASSWORD:-}" ]] \
       || die "AUTH_MODE=$AUTH_MODE exige AUTH_USERNAME e AUTH_PASSWORD"
     ok "credenciais de teste presentes (AUTH_MODE=$AUTH_MODE)"
+  fi
+  if is_true "$ENABLE_DAST" && [[ "${AUTH_MODE:-none}" == "header" ]]; then
+    [[ -n "${AUTH_HEADER:-}" ]] || die "AUTH_MODE=header exige AUTH_HEADER no arquivo de segredos"
   fi
 
   if is_true "$ZAP_ACTIVE"; then

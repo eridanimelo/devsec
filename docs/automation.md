@@ -27,6 +27,72 @@ tria, explica e propõe/executa correções.
 
 ---
 
+## Entrada pelo agente: “Analise meu projeto”
+
+O `AGENTS.md` da raiz direciona o pedido para `.agents/skills/security-scan/`.
+As skills são locais ao repositório. O agente deve estar trabalhando neste projeto
+para carregar essas instruções; elas não configuram agentes em outros repositórios.
+
+```bash
+./bin/devsec analyze
+# ou uma aplicação específica:
+./bin/devsec analyze --profile profiles/meu-projeto.env --open
+```
+
+`config/default-profile` contém o caminho do perfil padrão, inicialmente
+`profiles/achernar-identity.env`. Edite esse arquivo para mudar a aplicação padrão.
+Não há LLM embutido no CLI: a interpretação da frase e a revisão contextual são do
+agente; a execução e o relatório são reproduzíveis pelo CLI.
+
+### Docker da aplicação e credenciais de teste
+
+```dotenv
+APP_STACK_UP=1
+APP_COMPOSE_FILE=../minha-aplicacao/docker/compose.yml
+# Opcional: arquivo de ambiente já usado pela aplicação
+APP_COMPOSE_ENV_FILE=../minha-aplicacao/docker/.env
+APP_START_TIMEOUT=180
+```
+
+Paths são relativos à raiz do devsec ou absolutos. O CLI executa
+`docker compose up -d --build` com o diretório do Compose como project-directory,
+antes de verificar APP_URL e API_URL. O perfil Achernar já aponta para o Compose
+existente em `../ACHERNAR/achernar_identity/docker/docker-compose.yml`; ele exige
+as variáveis próprias da aplicação, como DATABASE_PASSWORD e ADMIN_EMAIL, em seu
+ambiente/.env. Essas configurações não são criadas nem sobrescritas pelo pipeline.
+O daemon Docker precisa estar disponível. Serviços e volumes são preservados ao final.
+Para não subir a aplicação, use APP_STACK_UP=0. `--no-stack` controla apenas a stack
+de ferramentas de segurança.
+
+Para autenticação, configure AUTH_MODE e endpoints no perfil público e guarde
+AUTH_USERNAME/AUTH_PASSWORD em `<perfil>.secrets.env`. Para header estático,
+AUTH_HEADER também deve ficar no arquivo de segredos; não exige usuário/senha.
+Os arquivos de autenticação temporários são removidos após o DAST e na saída do CLI.
+Os relatórios/logs brutos podem conter dados sensíveis do alvo: mantenha-os locais.
+
+Se um alvo não responder após a espera, o CLI registra DAST como failed, continua
+as análises de código e gera o dashboard. Falhas de Compose aparecem na cobertura.
+AUTH_REQUIRED=1 impede continuar sem autenticação após erro no login. Obter cookie
+ou token não comprova que as áreas protegidas foram cobertas: essa limitação aparece
+no dashboard e precisa de validação contextual.
+
+### Dashboard e plano
+
+Cada execução gera `index.html` autossuficiente, com filtros por severidade,
+categoria e ferramenta e busca por texto, além de `remediation-plan.json` e
+`remediation-plan.md`. O plano é preliminar e traz evidência, ação proposta,
+prioridade, validação e critério de aceite. O agente pode contextualizá-lo com o
+código; nenhuma correção da aplicação é aplicada pelo pedido de análise.
+`report.html` é mantido por compatibilidade. Todos os dados do dashboard vêm da
+execução: o exemplo de interface não é evidência de um scan real.
+
+### Playwright MCP
+
+A skill `.agents/skills/playwright-validation/SKILL.md` orienta o agente a descobrir
+e usar o MCP quando solicitado. O servidor precisa estar configurado no cliente;
+estas mudanças não instalam nem conectam um MCP. `AUTH_MODE=playwright` executa um
+script Node de login e funciona independentemente do MCP.
+
 ## 1. Pré-requisitos
 
 - Docker + Docker Compose v2;
@@ -48,7 +114,7 @@ Valide com:
 cp profiles/example.env profiles/meu-projeto.env
 # edite BACKEND_PATH, FRONTEND_PATH, APP_URL, API_URL e AUTH_MODE
 
-cp profiles/example.secrets.env profiles/meu-projeto.secrets.env
+cp profiles/example.secrets.env.example profiles/meu-projeto.secrets.env
 # preencha AUTH_USERNAME / AUTH_PASSWORD (e tokens, se houver)
 
 ./bin/devsec scan --profile profiles/meu-projeto.env
@@ -165,6 +231,8 @@ Cada execução fica em `reports/runs/<run-id>/`:
 
 | Arquivo | Uso |
 |---|---|
+| `index.html` | dashboard com JavaScript e filtros |
+| `remediation-plan.json` / `.md` | plano preliminar com validação |
 | `report.html` | leitura humana |
 | `report.md` | versionar/colar em issue |
 | `findings.json` | automação, Jira, IA |
@@ -179,7 +247,10 @@ Cada execução fica em `reports/runs/<run-id>/`:
 ./bin/devsec scan --profile profiles/meu-projeto.env --baseline last
 ```
 
-Compara por `fingerprint` estável e informa `new`, `fixed` e `persisting`.
+Compara por `fingerprint` e informa `new`, `fixed` e `persisting`. `fixed` é
+compatibilidade de schema e significa “não observado novamente”, não correção
+comprovada. `last` seleciona o mesmo projeto/escopo; projeto, escopo, modo DAST ou
+cobertura incompatível impedem a comparação.
 
 ### Gate
 
@@ -187,7 +258,9 @@ Compara por `fingerprint` estável e informa `new`, `fixed` e `persisting`.
 - `REQUIRES_REVIEW` — estágio falhou/ficou parcial;
 - `PASS` — nada acima do limiar e estágios concluídos.
 
-Para usar em CI, defina `FAIL_ON_GATE=1` para sair com código 2 em `FAIL`.
+Para usar em CI, defina `FAIL_ON_GATE=1`: código 2 em `FAIL` e código 3 em
+`REQUIRES_REVIEW`. Etapas ausentes ou desabilitadas impedem um PASS de cobertura
+completa. Um scan parcial continua útil, mas não atesta a execução dos quatro estágios.
 
 ---
 
@@ -257,3 +330,25 @@ reports/runs/           # execuções (ignorado no Git)
 | ZAP não cobre área logada | contexto/auth insuficiente; revise `AUTH_MODE` |
 | Semgrep falha offline | use `SEMGREP_CONFIG=/caminho/regras` |
 | porta ocupada | ajuste `SONAR_PORT`, `DTRACK_API_PORT`, `ZAP_PORT` no `.env` |
+
+## Integração Achernar Identity: aplicação somente leitura
+
+O perfil usa o frontend e o backend em `../ACHERNAR/achernar_identity`, os comandos
+do README e o Compose existente. O arquivo de ambiente é passado explicitamente
+por APP_COMPOSE_ENV_FILE. Se ainda não existir ambiente da aplicação, crie um
+`*.secrets.env` em `devsec/profiles`, sem escrever no diretório da aplicação.
+Credenciais existentes do perfil são preservadas; o administrador de teste do
+README pode preencher campos ausentes. Não substitua uma senha existente pelo
+exemplo do README: um banco persistente pode ter credenciais diferentes.
+
+APP_HEALTH_URL aponta para `/api/health` e exige resposta HTTP de sucesso.
+AUTH_VERIFY_URL aponta para `/api/auth/session`: o login só é validado se a rota
+retornar 401/403 sem sessão e 2xx com a sessão obtida. Isso comprova acesso à rota,
+não cobertura de todas as áreas autenticadas.
+
+Os scanners usam código somente leitura; o diretório de trabalho do Sonar fica
+em `/tmp` dentro do container. Scripts, relatórios e ajustes ficam em devsec.
+Não execute npm install, builds, testes ou correções dentro da aplicação durante
+a análise. O build Docker previsto no README compila dentro das imagens.
+Contas extras de teste podem ser criadas pela API/interface se necessárias para
+validar permissões, preservando contas e dados existentes.

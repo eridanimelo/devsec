@@ -97,6 +97,10 @@ load_profile() {
   FRONTEND_PATH="$(resolve_path "${FRONTEND_PATH:-}")"
   OPENAPI_SPEC="$(resolve_path "${OPENAPI_SPEC:-}")"
   AUTH_PLAYWRIGHT_SCRIPT="$(resolve_path "${AUTH_PLAYWRIGHT_SCRIPT:-}")"
+  APP_COMPOSE_FILE="$(resolve_path "${APP_COMPOSE_FILE:-}")"
+  APP_COMPOSE_ENV_FILE="$(resolve_path "${APP_COMPOSE_ENV_FILE:-}")"
+  : "${APP_STACK_UP:=1}"
+  : "${APP_START_TIMEOUT:=180}"
 
   # Portas/URLs da stack (perfil pode sobrescrever).
   : "${SONAR_PORT:=9000}"

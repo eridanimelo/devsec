@@ -20,6 +20,7 @@ usage() {
 devsec — pipeline local de segurança
 
 Comandos:
+  analyze [--profile <arquivo>] Analisa o projeto padrão e gera dashboard + plano
   doctor                         Verifica pré-requisitos (Docker, jq, Python, stack)
   scan --profile <arquivo.env>   Executa o pipeline e gera o relatório
   report --run <run-id>          Regenera o relatório de uma execução existente
@@ -47,6 +48,10 @@ cmd="${1:-help}"
 shift || true
 
 case "$cmd" in
+  analyze|analyse|analisar)
+    source "$DEVSEC_ROOT/lib/scan.sh"
+    cmd_analyze "$@"
+    ;;
   doctor)
     # shellcheck source=../lib/preflight.sh
     source "$DEVSEC_ROOT/lib/preflight.sh"

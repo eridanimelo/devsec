@@ -86,7 +86,7 @@ run_semgrep() {
         >>"$RUN_DIR/logs/semgrep-$name.log" 2>&1 || code=$?
     fi
 
-    # Semgrep: 0 = sem achados, 1 = achados encontrados, >1 = erro.
+    # scan sem --error retorna 0 mesmo com achados; >1 indica erro.
     if [[ "$code" -gt 1 ]] || [[ ! -s "$out" ]]; then
       warn "Semgrep falhou em $name (rc=$code). Veja logs/semgrep-$name.log"
       rc=1
@@ -234,9 +234,10 @@ run_sonar() {
       --add-host=host.docker.internal:host-gateway \
       -e SONAR_HOST_URL="$host_in_container" \
       -e SONAR_TOKEN="$SONAR_TOKEN_EFFECTIVE" \
-      -v "$path:/usr/src" \
+      -v "$path:/usr/src:ro" \
       -w /usr/src \
       sonarsource/sonar-scanner-cli:latest \
+      -Dsonar.working.directory=/tmp/devsec-scannerwork \
       -Dsonar.projectKey="$key" \
       -Dsonar.projectName="$key" \
       -Dsonar.sourceEncoding=UTF-8 \

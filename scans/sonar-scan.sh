@@ -26,10 +26,11 @@ docker run --rm \
   --add-host=host.docker.internal:host-gateway \
   -e SONAR_HOST_URL="$SONAR_HOST_URL" \
   -e SONAR_TOKEN="$SONAR_TOKEN" \
-  -v "$(cd "$PROJECT_DIR" && pwd):/usr/src" \
+  -v "$(cd "$PROJECT_DIR" && pwd):/usr/src:ro" \
   -w /usr/src \
   sonarsource/sonar-scanner-cli:latest \
   -Dsonar.projectKey="$PROJECT_KEY" \
   -Dsonar.projectName="$PROJECT_KEY" \
   -Dsonar.sourceEncoding=UTF-8 \
+  -Dsonar.working.directory=/tmp/devsec-scannerwork \
   "${@:3}"

@@ -3,6 +3,20 @@
 
 # shellcheck shell=bash
 
+cmd_analyze() {
+  local args=("$@") profile="" arg
+  for arg in "$@"; do
+    case "$arg" in --profile|-p) profile=explicit ;; esac
+  done
+  if [[ -z "$profile" ]]; then
+    [[ -f "$DEVSEC_ROOT/config/default-profile" ]] || die "configure config/default-profile ou informe --profile"
+    IFS= read -r profile < "$DEVSEC_ROOT/config/default-profile" || true
+    [[ -n "$profile" ]] || die "config/default-profile está vazio"
+    args=(--profile "$(resolve_path "$profile")" "${args[@]}")
+  fi
+  cmd_scan "${args[@]}"
+}
+
 cmd_scan() {
   local profile="" only="" skip="" baseline="" open=0
   local active=0 authorized=0 no_stack=0 run_id=""
@@ -76,6 +90,10 @@ cmd_scan() {
 
   run_preflight
 
+  trap 'cleanup_dast_auth' EXIT
+  application_up || true
+  check_dast_targets
+
   stack_up || true
 
   if is_true "$ENABLE_SAST"; then run_sast; else record_status "sast" "skipped" "desabilitado" 0; fi
@@ -99,14 +117,18 @@ cmd_scan() {
     printf '  %shigh%s        %s\n' "$C_BOLD" "$C_RESET" "$(jq -r '.counts.high' "$summary")"
     printf '  %smedium%s      %s\n' "$C_BOLD" "$C_RESET" "$(jq -r '.counts.medium' "$summary")"
     printf '  %slow%s         %s\n' "$C_BOLD" "$C_RESET" "$(jq -r '.counts.low' "$summary")"
-    printf '  %srelatório%s   %s\n' "$C_BOLD" "$C_RESET" "$RUN_DIR/report.html"
+    printf '  %sdashboard%s   %s\n' "$C_BOLD" "$C_RESET" "$RUN_DIR/index.html"
+    printf '  %splano%s       %s\n' "$C_BOLD" "$C_RESET" "$RUN_DIR/remediation-plan.md"
     printf '  %sachados%s     %s\n' "$C_BOLD" "$C_RESET" "$RUN_DIR/findings.json"
   fi
 
-  [[ "$open" == "1" ]] && open_report "$RUN_DIR/report.html"
+  [[ "$open" == "1" ]] && open_report "$RUN_DIR/index.html"
 
-  if [[ "${FAIL_ON_GATE:-0}" == "1" && -f "$summary" ]] && [[ "$(jq -r '.gate.result' "$summary")" == "FAIL" ]]; then
-    return 2
+  if [[ "${FAIL_ON_GATE:-0}" == "1" && -f "$summary" ]]; then
+    case "$(jq -r '.gate.result' "$summary")" in
+      FAIL) return 2 ;;
+      REQUIRES_REVIEW) return 3 ;;
+    esac
   fi
   return 0
 }
@@ -145,8 +167,8 @@ cmd_report() {
   [[ -n "$baseline" ]] && args+=(--baseline "$baseline")
   python3 "$DEVSEC_ROOT/lib/report.py" "${args[@]}"
 
-  ok "relatório regenerado: $run_dir/report.html"
-  [[ "$open" == "1" ]] && open_report "$run_dir/report.html"
+  ok "relatório regenerado: $run_dir/index.html"
+  [[ "$open" == "1" ]] && open_report "$run_dir/index.html"
   return 0
 }
 

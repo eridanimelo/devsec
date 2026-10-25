@@ -12,6 +12,11 @@ run_dast() {
     return 0
   fi
 
+  if [[ "${DAST_TARGET_READY:-1}" != "1" ]]; then
+    record_status "dast" "failed" "alvo inacessível após inicialização da aplicação" 0
+    return 0
+  fi
+
   step "DAST"
   local started rc=0 auth_rc=0
   started="$(epoch_s)"
@@ -24,10 +29,12 @@ run_dast() {
     if is_true "${AUTH_REQUIRED:-0}"; then
       warn "autenticação de teste falhou e AUTH_REQUIRED=1: DAST será pulado"
       record_status "dast" "failed" "autenticação de teste falhou" "$(( $(epoch_s) - started ))"
+      cleanup_dast_auth
       return 0
     fi
     warn "autenticação de teste falhou: DAST seguirá sem autenticação"
     rc=1
+    cleanup_dast_auth
   fi
 
   if [[ -n "${APP_URL:-}" ]]; then
@@ -39,12 +46,19 @@ run_dast() {
     warn "APP_URL não informado: baseline ignorado"
   fi
 
+  if [[ -z "${APP_URL:-}" && -z "${OPENAPI_SPEC:-}" ]]; then
+    warn "API_URL sem OPENAPI_SPEC: nenhuma rota de API foi analisada"
+    rc=1
+  fi
+
   if [[ -n "${OPENAPI_SPEC:-}" && -n "${API_URL:-}" ]]; then
     zap_api || rc=1
   elif [[ -n "${OPENAPI_SPEC:-}" ]]; then
     warn "OPENAPI_SPEC informado sem API_URL: scan de API ignorado"
+    rc=1
   fi
 
+  cleanup_dast_auth
   if [[ "$rc" -eq 0 ]]; then
     record_status "dast" "ok" "DAST concluído" "$(( $(epoch_s) - started ))"
   else
@@ -174,6 +188,27 @@ dast_login() {
   fi
 
   ZAP_AUTH_PROP_REL="auth.prop"
+  if [[ -n "${AUTH_VERIFY_URL:-}" ]]; then
+    local anonymous_code authenticated_code
+    anonymous_code="$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' "$AUTH_VERIFY_URL" 2>/dev/null || true)"
+    if [[ "$anonymous_code" != "401" && "$anonymous_code" != "403" ]]; then
+      warn "AUTH_VERIFY_URL não comprovou proteção sem sessão (esperado 401/403)"
+      return 1
+    fi
+    local verify_args=(-sS --max-time 10 -o /dev/null -w '%{http_code}')
+    if is_true "${AUTH_USE_COOKIE:-0}"; then
+      verify_args+=(-b "$jar")
+    else
+      verify_args+=(-H "$header: ${prefix}${token}")
+    fi
+    authenticated_code="$(curl "${verify_args[@]}" "$AUTH_VERIFY_URL" 2>/dev/null || true)"
+    [[ "$authenticated_code" =~ ^2[0-9][0-9]$ ]] || {
+      warn "sessão de teste não validada na rota protegida"
+      return 1
+    }
+    run_meta_set "auth_verified" "true"
+    ok "sessão de teste confirmada na rota protegida"
+  fi
   return 0
 }
 
@@ -338,13 +373,14 @@ zap_api() {
   spec_file="$(basename "$OPENAPI_SPEC")"
 
   zap_common_flags "api"
+  is_true "$ZAP_ACTIVE" || ZAP_FLAGS+=(-S)
   local code=0
   docker run --rm \
     --add-host=host.docker.internal:host-gateway \
     -v "$RUN_DIR/raw/dast:/zap/wrk:rw" \
     -v "$spec_dir:/spec:ro" \
     ghcr.io/zaproxy/zaproxy:stable zap-api-scan.py \
-    -t "$target" -f "/spec/$spec_file" "${ZAP_FLAGS[@]}" \
+    -t "/spec/$spec_file" -f openapi "${ZAP_FLAGS[@]}" \
     >>"$RUN_DIR/logs/zap-api.log" 2>&1 || code=$?
 
   if [[ -s "$RUN_DIR/raw/dast/api.json" ]]; then
@@ -356,4 +392,15 @@ zap_api() {
 
   warn "ZAP API falhou (rc=$code). Veja logs/zap-api.log"
   return 1
+}
+
+
+cleanup_dast_auth() {
+  [[ -n "${RUN_DIR:-}" ]] || return 0
+  local filename
+  for filename in auth.prop context.context cookies.txt csrf.json login-headers.txt login-response.json playwright-headers.json; do
+    rm -f "$RUN_DIR/raw/dast/$filename"
+  done
+  ZAP_AUTH_PROP_REL=""
+  ZAP_CONTEXT_REL=""
 }
